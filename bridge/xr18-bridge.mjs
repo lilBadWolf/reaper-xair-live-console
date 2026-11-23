@@ -133,12 +133,22 @@ function decode(buf) {
 const state = {};          // address -> {t, v}
 let mixer = { connected: false, host: config.host, name: '', model: '', firmware: '' };
 let lastReply = 0;
-const sock = dgram.createSocket('udp4');
-sock.bind(() => sock.setBroadcast(true));
+// The mixer socket is reopened while the mixer doesn't answer (see the heartbeat): a long-lived UDP socket can
+// stay stuck after a network change (Wi-Fi reconnect, a VPN coming up) even though a new one works fine.
+let sock = null, lastOpen = 0, reopenLogged = false;
+function openSocket() {
+  try { sock?.close(); } catch {}
+  const s = dgram.createSocket('udp4');
+  s.on('message', onMessage);
+  s.on('error', (e) => log('mixer socket:', e.message)); // e.g. network down; the heartbeat reopens it
+  s.bind(() => { try { s.setBroadcast(true); } catch {} });
+  sock = s;
+  lastOpen = Date.now();
+}
 
 function send(address, list = [], host = config.host) {
-  if (!host) return;
-  sock.send(encode(address, list), XR_PORT, host);
+  if (!host || !sock) return;
+  try { sock.send(encode(address, list), XR_PORT, host, () => {}); } catch {} // errors: see 'error' above
 }
 
 // Addresses we keep in sync. The web app may ask for more via /query.
@@ -168,7 +178,7 @@ function queryAll() {
   step();
 }
 
-sock.on('message', (buf, rinfo) => {
+function onMessage(buf, rinfo) {
   let msg;
   try { msg = decode(buf); } catch { return; }
   if (msg.address === '/xinfo') {
@@ -179,7 +189,7 @@ sock.on('message', (buf, rinfo) => {
     lastReply = Date.now();
     const was = mixer.connected;
     mixer = { connected: true, host: config.host, name, model, firmware: fw, ip };
-    if (!was) { log('connected to', name, model, config.host); queryAll(); broadcast({ type: 'status', mixer }); }
+    if (!was) { log('connected to', name, model, config.host); reopenLogged = false; queryAll(); broadcast({ type: 'status', mixer }); }
     return;
   }
   if (rinfo.address !== config.host) return;
@@ -192,10 +202,16 @@ sock.on('message', (buf, rinfo) => {
   state[msg.address] = val;
   queueDelta(msg.address, val);
   if ((prev && prev.v !== val.v) || (!prev && !known)) learn(msg.address, val);
-});
+}
+openSocket();
 
 // Heartbeat + /xremote keeps the mixer pushing changes made elsewhere (X-Air Edit, app).
 setInterval(() => {
+  // no answer for 10 s: start over with a fresh socket (every 10 s until the mixer answers)
+  if (!mixer.connected && Date.now() - lastReply > 10000 && Date.now() - lastOpen > 10000) {
+    if (!reopenLogged) { log('no answer from the mixer: reopening the connection (repeats every 10 s until it answers)'); reopenLogged = true; }
+    openSocket();
+  }
   if (!config.host) { send('/xinfo', [], '255.255.255.255'); return; }
   send('/xinfo');
   send('/xremote');
