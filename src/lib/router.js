@@ -1,4 +1,5 @@
-// Minimal hash router: #live | #mixer | #fx | #xr | #settings | #track/<track name>[/artist]
+// Minimal hash router: #live | #yarg | #mixer | #fx | #xr | #settings | #track/<track name>[/artist]
+// Performer pages (no tabs): #yarg/stage[/harm1|harm2|harm3] (lyrics), #yarg/click (drummer's click), #yarg/tab[/<track id>] (tablature)
 // "/artist" = Artist mode: just that track's presets and monitor sends (for a performer's phone).
 import { reactive } from 'vue';
 
@@ -6,9 +7,11 @@ function parse() {
   const h = decodeURIComponent(location.hash.slice(1));
   if (h.startsWith('track/')) {
     const rest = h.slice(6), artist = rest.endsWith('/artist');
-    return { view: 'track', track: artist ? rest.slice(0, -7) : rest, artist };
+    return { view: 'track', track: artist ? rest.slice(0, -7) : rest, artist, mode: null, part: null, tabTrack: null };
   }
-  return { view: h || null, track: null, artist: false };
+  const y = h.match(/^yarg\/(stage|click|tab)(?:\/([\w-]+))?$/);
+  if (y) return { view: 'yarg', track: null, artist: true, mode: { stage: 'lyrics', click: 'click', tab: 'tab' }[y[1]], part: y[1] === 'stage' ? y[2] || null : null, tabTrack: y[1] === 'tab' ? y[2] || null : null };
+  return { view: h || null, track: null, artist: false, mode: null, part: null, tabTrack: null };
 }
 export const route = reactive(parse());
 window.addEventListener('hashchange', () => Object.assign(route, parse()));

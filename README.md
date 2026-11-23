@@ -17,6 +17,7 @@ whole-song sound recalls for every channel at once, monitor mixes, and a QR code
 - **Track pages**: everything for one channel. That's presets, REAPER fader, XR18 channel (source, mute, level), sends to Aux 1–6 and FX 1–4, and **gate / EQ (with a draggable response curve) / compressor** editors.
 - **Buses**: monitor mixes "sends on faders" style. Pick a bus to see every source's send into it, with meters and the bus master.
 - **Artist pages + QR codes**: one tap on a track page shows a QR code. A musician scans it and gets *their* channel on their phone: a big mute, their effect presets, and how loud they are in each monitor. There's nothing that can upset front-of-house.
+- **YARG tab** (appears while [YARG](https://yarg.in) is running on the REAPER computer): **live lyrics** in time for the singers (harmony parts, pitch guide), **tablature** in time for guitar and bass (from the chart's Pro parts or a Guitar Pro file), a **click** for the drummer, **auto-loading the Live song** that matches YARG's (sections included), the menu music, and **scores**. QR codes put any of these alone on a performer's phone. See [YARG](#yarg).
 - **XR18 tab**: all 16 channels plus aux, with mute, source, fader and meter.
 - Smooth 60 fps meters straight from the mixer. Changes made in X-Air Edit or on another device show up live. Works offline (no CDN), dark UI, sized for touch.
 
@@ -32,7 +33,8 @@ whole-song sound recalls for every channel at once, monitor mixes, and a QR code
 
 - **REAPER** 6 or 7 (tested on 7.86, macOS)
 - A **Behringer X Air** mixer on the same network as the REAPER computer (tested on XR18, firmware 1.25; the X Air family shares one OSC protocol, so X18/XR16/XR12/MR18 should work, but they're untested. Channels a model doesn't have just show as empty)
-- **Node.js 18+** on the REAPER computer ([nodejs.org](https://nodejs.org)). It runs the small bridge that talks to the mixer.
+- **Node.js 18+** on the REAPER computer ([nodejs.org](https://nodejs.org)). It runs the small bridge that talks to the mixer (22.13+ for YARG scores).
+- Optional: **YARG** on the same computer, for the YARG tab
 - Phones, tablets and laptops on the same network, with any modern browser
 
 ## Install
@@ -87,6 +89,39 @@ Reload the page on your devices. If `reaper/live_console.lua` changed, restart R
 - **Faders**: drag (relative, so they never jump), shift-drag for fine control, double-tap for 0 dB. **Knobs**: drag up/down.
 - **Artist mode**: on a device in artist mode, hold the logo for 1 s to get back to the full app.
 
+### YARG
+
+If the band also plays [YARG](https://yarg.in) (Rock Band style, on the REAPER computer), a **YARG** tab appears while it's running.
+
+**Setup**
+- In YARG: *Settings → All Settings → Experimental → **Enable UDP Data Stream*** (once). Without it you still get the song and its lyrics, but nothing follows the song.
+- **On a Mac, start YARG with `npm run yarg`** (or double-click `yarg/Start YARG.command`) instead of the YARC Launcher. YARG broadcasts its data stream without the socket permission macOS requires (Windows doesn't check), so macOS blocks it. The launcher loads a tiny library into YARG that adds that permission (`yarg/broadcast-fix.c`; YARG's files aren't changed). It needs Apple's command line tools (`xcode-select --install`) the first time.
+- YARG installed somewhere unusual, or started with a custom data path? Enter the folder that contains `currentSong.json` in *Settings → YARG*.
+
+**How it follows the song**: the bridge reads the song from YARG's `currentSong.json` and everything else straight from the song file (`.sng`, or a folder with `notes.mid` / `notes.chart`). YARG doesn't broadcast its playback position, so the bridge works it out from the data stream: the clock starts at the chart's first tempo marker, stops while YARG is paused, and lines up with every bar line YARG reports (picking up song speed too). Lyrics a bit early or late on one device (e.g. a slow phone)? *Settings → YARG → Lyrics timing*.
+
+**Lyrics**: every line of the song with the current one near the top, syllables lighting up as they're sung, section headings, and a countdown before each entry. Pick **Lead / Harmony 1–3** per device; **Pitch** shows the notes coming up and names the one to sing. The Live tab has a **Lyrics** button too.
+
+**Tab**: guitar and bass tablature in time, laid out in bars like a printed tab, with a cursor and the current row near the top.
+- Songs whose chart has **Pro Guitar/Bass** (Rock Band 3 songs) have it automatically.
+- For any other song, tap **+ Guitar Pro file** while it's playing (or in the menu) and pick a `.gp`, `.gpx`, `.gp5`, `.gp4` or `.gp3` file (e.g. one you downloaded from Ultimate Guitar). It's kept in `LiveConsole/tabs/`; files named `Artist - Title.gp5` dropped in that folder are found too.
+- A Guitar Pro tab lines up with the song by itself: it works out how the tab's bars relate to the chart's (a 3/4 tab against a 4/4 chart is fine), plays out its repeats, then places it **section by section** by matching its rhythm to the chart's guitar/bass notes and its section names to the chart's. A repeat the tab doesn't write out, an extra chorus or a skipped section only moves the parts after it. The Tab view shows how well it matches and what it adjusted; **Bar offset** nudges everything if needed.
+- **Tuning**: Guitar Pro files carry theirs, as do charts that record it (`real_guitar_tuning`). Many converted songs don't: the Tab view then marks the tuning *assumed* (standard) and lets you pick the right one (Drop D, E♭, Drop C…) per song and track. It only relabels the strings (the frets are the chart's) and is remembered for every device.
+
+**Click**: for the drummer: the beat in the bar (bar 1 highlighted), bar number and bars until the next section, timed from the chart. *Click sound* adds an audible click on that device.
+
+**Auto-load** (YARG tab or *Settings → YARG*): when YARG starts a song, the Live song with the same name loads ("The", "(Live)" etc. are ignored), and its sections follow YARG's: "Verse 2" loads the song's *Verse* section, "Pre-Chorus" its *Pre*, "Gtr solo" its *Solo*; a YARG section with no match goes back to the song's base sound. Only one device does the loading. *Up next* is the next song in the current Live setlist.
+
+**Scores**: after a song, the band score, stars and each player's result (from YARG's own scores), and during a song your best for it. YARG doesn't share the live score while playing. Needs Node 22.13 or later.
+
+**Menu music** (macOS/Linux): the song YARG plays in its menus shows too, with its lyrics. They follow the song when the bridge is sure it started from the top: when it follows the previous menu song, or is the first after YARG starts, or when you tap *Follow it*. (The music library's previews look the same from outside but start mid-song.) YARG doesn't report pausing or skipping the menu music, so tap *Stop following* if you do.
+
+**Performer pages** (QR button on the YARG tab): `#yarg/stage` lyrics, `#yarg/stage/harm2` a harmony part, `#yarg/tab/<track>` a tab, `#yarg/click` the click. Hold the logo for 1 s to get back to the full app.
+
+| Lyrics with pitch guide | Tab |
+|---|---|
+| ![YARG lyrics](docs/screenshots/yarg-lyrics.png) | ![YARG tab](docs/screenshots/yarg-tab.png) |
+
 ## How it works
 
 ```
@@ -99,6 +134,8 @@ Reload the page on your devices. If `reaper/live_console.lua` changed, restart R
 │                        │  HTTP + SSE :8899 │                                    │
 │                        │──────────────────▶│ bridge/xr18-bridge.mjs (Node)  ────┼── OSC/UDP :10024 ──▶ X Air mixer
 └────────────────────────┘                   │  mixer relay, meters, songs store  │
+                                             │  bridge/yarg.mjs ◀── currentSong.json, song files,
+                                             │                  ◀── YARG data stream (UDP :36107)
                                              └────────────────────────────────────┘
 ```
 
@@ -134,7 +171,12 @@ src/                 Vue 3 app (views/, components/, lib/)
   lib/meters.js      60 fps meter engine (outside Vue reactivity)
   lib/live.js        songs, sections, setlists
   lib/xrparams.js    X Air parameter scales (gate/EQ/comp), EQ response math
-bridge/xr18-bridge.mjs   Node bridge (no dependencies)
+  lib/yarg.js        YARG song, lyrics, tabs and song clock (from the bridge)
+  lib/yargAuto.js    auto-load the Live song/section matching YARG's
+bridge/xr18-bridge.mjs   Node bridge (no dependencies except alphaTab, for Guitar Pro files)
+bridge/tabs.mjs          YARG tabs: Pro Guitar/Bass from charts, Guitar Pro files (read with alphaTab) laid onto the chart's bars
+bridge/yarg.mjs          YARG: current song, lyric/harmony/beat parsing (.mid/.chart/.sng), song clock, menu song, scores
+yarg/                    macOS launcher for YARG (data stream fix)
 reaper/live_console.lua  REAPER helper script
 scripts/setup.mjs        installer
 ```

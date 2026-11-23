@@ -7,6 +7,8 @@ import SettingsView from './views/SettingsView.vue';
 import TrackView from './views/TrackView.vue';
 import LiveView from './views/LiveView.vue';
 import BusesView from './views/BusesView.vue';
+import YargView from './views/YargView.vue';
+import LyricsModal from './components/LyricsModal.vue';
 import SongEditor from './components/SongEditor.vue';
 import QrModal from './components/QrModal.vue';
 import SetlistsModal from './components/SetlistsModal.vue';
@@ -17,15 +19,18 @@ import { modal, closeModal } from './lib/modal.js';
 import { reaper, toggleMute } from './lib/reaper.js';
 import { xr, xrMuted, toggleXrMute } from './lib/xr18.js';
 import { route, go, trackHash } from './lib/router.js';
+import { yarg } from './lib/yarg.js';
 
 const TABS = [
   { id: 'live', label: 'Live', comp: LiveView },
+  { id: 'yarg', label: 'YARG', comp: YargView, auto: true }, // only while YARG is detected
   { id: 'mixer', label: 'Mixer', comp: MixerView },
   { id: 'fx', label: 'Effects', comp: FxView },
   { id: 'buses', label: 'Buses', comp: BusesView },
   { id: 'xr', label: 'XR18', comp: XrView },
   { id: 'settings', label: 'Settings', comp: SettingsView },
 ];
+const tabs = computed(() => TABS.filter((t) => !t.auto || yarg.detected || route.view === t.id));
 // URL hash wins (bookmarkable per device), else last tab used on this device.
 if (!route.view) {
   let last = 'mixer';
@@ -39,7 +44,7 @@ const current = computed(() => (route.view === 'track' ? TrackView : (TABS.find(
 
 // Artist mode has no tabs; hold the logo for 1 s to leave it (for the engineer).
 let holdTimer = null;
-const holdStart = () => { if (route.artist) holdTimer = setTimeout(() => { location.hash = trackHash(route.track, false); }, 1000); };
+const holdStart = () => { if (route.artist) holdTimer = setTimeout(() => { location.hash = route.view === 'yarg' ? '#yarg' : trackHash(route.track, false); }, 1000); };
 const holdEnd = () => clearTimeout(holdTimer);
 const master = computed(() => reaper.tracks.find((t) => t.idx === 0));
 const reaperMuted = computed(() => !!master.value?.muted);
@@ -71,7 +76,7 @@ const playing = computed(() => reaper.playState === 1 || reaper.playState === 5)
       </div>
 
       <nav v-if="!route.artist">
-        <button v-for="t in TABS" :key="t.id" :class="{ active: route.view === t.id }" @click="go(t.id)">{{ t.label }}</button>
+        <button v-for="t in tabs" :key="t.id" :class="{ active: route.view === t.id }" @click="go(t.id)">{{ t.label }}</button>
       </nav>
     </header>
 
@@ -82,6 +87,7 @@ const playing = computed(() => reaper.playState === 1 || reaper.playState === 5)
     <QrModal v-else-if="modal.kind === 'qr'" v-bind="modal.props" />
     <SetlistsModal v-else-if="modal.kind === 'setlists'" />
     <AddSongsModal v-else-if="modal.kind === 'addSongs'" />
+    <LyricsModal v-else-if="modal.kind === 'lyrics'" />
     <SongEditor v-else-if="modal.kind === 'song'" :key="modal.props.songId || 'new'" v-bind="modal.props" />
   </div>
 </template>

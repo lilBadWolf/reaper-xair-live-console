@@ -17,3 +17,6 @@ bridge/*.bak
 Thumbs.db
 .vscode/
 .idea/
+
+# YARG launcher build output
+yarg/build/

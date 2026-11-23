@@ -11,6 +11,14 @@ const defaults = {
   qrHost: '',                    // address phones use to reach this Mac ('' = auto)
   bus: 1,                        // Buses tab: selected bus
   busShowAll: false,             // Buses tab: include unnamed channels
+  lyricsOffsetMs: 0,             // YARG lyrics: + shows them earlier on this device, - later
+  lyricsScale: 1,                // YARG lyrics: text size on this device
+  vocalPart: '',                 // YARG lyrics: vocals | harm1 | harm2 | harm3 ('' = lead)
+  pitchGuide: false,             // YARG lyrics: show the pitch guide
+  clickSound: false,             // YARG click: also play a click on this device
+  tabTrack: '',                  // YARG tab: track id last picked on this device
+  tabKind: 'guitar',             // YARG tab: guitar | bass (used when that track id isn't in the next song)
+  tabScale: 1,                   // YARG tab: size on this device
 };
 
 let saved = {};

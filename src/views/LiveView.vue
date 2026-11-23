@@ -6,6 +6,7 @@ import { live, applySong, checkActive, songSummary, currentSetlist, setlistSongs
 import { reaper } from '../lib/reaper.js';
 import { xr } from '../lib/xr18.js';
 import { openModal } from '../lib/modal.js';
+import { yarg } from '../lib/yarg.js';
 
 const editing = ref(false);
 const problems = ref([]);
@@ -105,6 +106,9 @@ onBeforeUnmount(() => cancelAnimationFrame(raf));
         <span class="slc">{{ songs.length }}</span>
         <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" /></svg>
       </button>
+      <button v-if="yarg.detected" class="lyr" title="YARG lyrics" @click="openModal('lyrics')">
+        <svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>Lyrics
+      </button>
       <button class="ghost" :class="{ on: editing }" @click="editing = !editing">{{ editing ? 'Done' : 'Edit' }}</button>
       <button v-if="!editing" class="add" @click="openModal('song', { songId: null })">+ New song</button>
     </div>
@@ -175,6 +179,8 @@ onBeforeUnmount(() => cancelAnimationFrame(raf));
 .slbtn svg { flex: none; width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .sln { font-size: 15px; font-weight: 750; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .slc { flex: none; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: #ffffff10; color: var(--muted); font-size: 12px; display: grid; place-items: center; }
+.bar .lyr { display: flex; align-items: center; gap: 6px; }
+.bar .lyr svg { width: 16px; height: 16px; fill: none; stroke: #b48cff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .bar .ghost.on { border-color: var(--accent); color: var(--accent); }
 .bar .add, .editfoot .add { background: var(--accent); border-color: var(--accent); color: #041311; }
 

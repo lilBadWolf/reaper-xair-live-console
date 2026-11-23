@@ -13,9 +13,10 @@ export function shareHost() {
   const ip = xr.lan[0]?.ip;
   return ip ? `${ip}${location.port ? `:${location.port}` : ''}` : location.host;
 }
-export function trackUrl(track, artist) {
-  return `${location.protocol}//${shareHost()}${location.pathname}${trackHash(track, artist)}`;
+export function pageUrl(hash) {
+  return `${location.protocol}//${shareHost()}${location.pathname}${hash}`;
 }
+export const trackUrl = (track, artist) => pageUrl(trackHash(track, artist));
 
 // QR as an SVG path (1 unit per module) with a 3-module quiet zone.
 export function qrSvg(text) {

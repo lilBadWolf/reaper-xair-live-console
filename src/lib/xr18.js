@@ -4,6 +4,7 @@ import { settings, bridgeBase, channelAddr, returnAddr, ALL_CHANNELS, chLabel } 
 import { feedMany } from './meters.js';
 import { live } from './liveStore.js';
 import { normalizeDoc } from './live.js';
+import { onYargMessage } from './yarg.js';
 
 // /meters/1 layout: ch 1-16 -> 0-15, aux L/R 16-17, fx rtn 18-25, bus 26-31, fx send 32-35, main L/R 36-37, mon 38-39
 export const meterKeys = (ch) => (ch === 'aux' ? ['x:16', 'x:17'] : [`x:${+ch - 1}`]);
@@ -30,7 +31,10 @@ export function startXr() {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'meters') {
       feedMany('x:', msg.m); // not reactive: drawn by the meter engine
+    } else if (msg.type.startsWith('yarg')) {
+      onYargMessage(msg);
     } else if (msg.type === 'snapshot') {
+      onYargMessage(msg);
       xr.mixer = msg.mixer;
       xr.values = Object.fromEntries(Object.entries(msg.values).map(([a, o]) => [a, o.v]));
       xr.learned = msg.learned || [];

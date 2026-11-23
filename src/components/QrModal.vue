@@ -1,36 +1,42 @@
 <script setup>
-// QR code that opens this track's artist view on a performer's phone.
-// (The engineer works on the computer running REAPER, so QR links are always artist view.)
+// QR code that opens a performer page on a phone: a track's artist view, or (with `hash`) any page,
+// e.g. the YARG stage view for singers. (QR links are always the tab-less performer pages.)
 import { ref, computed } from 'vue';
 import Modal from './Modal.vue';
-import { trackUrl, qrSvg, shareHost } from '../lib/qr.js';
+import { trackUrl, pageUrl, qrSvg, shareHost } from '../lib/qr.js';
 import { closeModal } from '../lib/modal.js';
 import { trackHash } from '../lib/router.js';
 
-const props = defineProps({ track: { type: String, required: true } });
-const url = computed(() => trackUrl(props.track, true));
+const props = defineProps({
+  track: { type: String, default: '' },
+  hash: { type: String, default: '' },      // instead of a track: any page, e.g. '#yarg/stage'
+  title: { type: String, default: '' },
+  what: { type: String, default: '' },      // one line describing what the page shows
+});
+const url = computed(() => (props.hash ? pageUrl(props.hash) : trackUrl(props.track, true)));
 const qr = computed(() => qrSvg(url.value));
 const copied = ref(false);
 const local = computed(() => /^(localhost|127\.)/.test(shareHost()));
-function preview() { closeModal(); location.hash = trackHash(props.track, true); }
+function preview() { closeModal(); location.hash = props.hash || trackHash(props.track, true); }
 async function copy() {
   try { await navigator.clipboard.writeText(url.value); copied.value = true; setTimeout(() => (copied.value = false), 1500); } catch {}
 }
 </script>
 
 <template>
-  <Modal :title="track" subtitle="Scan to open on your phone" width="460px" @close="closeModal">
+  <Modal :title="title || track" subtitle="Scan to open on your phone" width="460px" @close="closeModal">
     <div class="wrap">
       <div class="qr">
         <svg :viewBox="qr.viewBox" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff" /><path :d="qr.d" fill="#0b0d10" /></svg>
       </div>
 
-      <p class="what">Opens <b>{{ track }}</b>: mute, effect presets and monitor mix.</p>
+      <p v-if="what" class="what">{{ what }}</p>
+      <p v-else class="what">Opens <b>{{ track }}</b>: mute, effect presets and monitor mix.</p>
 
       <div v-if="local" class="warn">This link uses this computer's local address, so phones can't open it. Set the address in Settings → QR codes.</div>
       <div class="url"><code>{{ url }}</code><button @click="copy">{{ copied ? 'Copied' : 'Copy' }}</button></div>
       <p class="hint">The phone must be on the same Wi-Fi as this computer. Tip: Add to Home Screen for one-tap access.</p>
-      <button class="preview" @click="preview">Preview artist view</button>
+      <button class="preview" @click="preview">{{ hash ? 'Preview' : 'Preview artist view' }}</button>
     </div>
   </Modal>
 </template>

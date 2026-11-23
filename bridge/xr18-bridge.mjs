@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Live Console bridge: browsers can't speak UDP/OSC, so this small zero-dependency
-// server relays between the web app (HTTP + Server-Sent Events) and a Behringer
+// Live Console bridge: browsers can't speak UDP/OSC, so this small server (no dependencies
+// except alphaTab, only for reading Guitar Pro files) relays between the web app (HTTP + Server-Sent Events) and a Behringer
 // X Air mixer (XR18 / X18 / XR16 / XR12 / MR18; OSC over UDP port 10024).
-// It also stores the LIVE tab's songs and setlists so every device shares them.
+// It also stores the LIVE tab's songs and setlists so every device shares them,
+// and follows YARG (current song, lyrics, song position; see yarg.mjs).
 //
 //   node xr18-bridge.mjs [--host <mixer ip>] [--port 8899] [--data <dir>] [--log <file>]
 //
@@ -12,11 +13,20 @@
 //   --log   append log output to this file (the REAPER script passes <data>/bridge.log)
 //
 // Endpoints (CORS open, LAN use):
-//   GET  /events          SSE stream: {type:'snapshot'|'delta'|'status'|'learn', ...}
+//   GET  /events          SSE stream: {type:'snapshot'|'delta'|'status'|'learn'|'yarg'|'yargClock'|'yargBeat', ...}
 //   GET  /status          JSON status
 //   POST /send            {a:'/lr/mix/on', t:'i', v:0}  or an array of those
 //   POST /query           {a:['/ch/01/mix/on', ...]}   ask the mixer for values
 //   POST /config          {host:'192.168.1.50'}         ('' = auto-discover)
+//                         {yargDir:'/path/to/YARG data'} ('' = auto: YARG's standard data folder)
+//                         {yargAuto:true}              load the Live song matching what YARG plays (shared setting)
+//   POST /yarg/claim      {key:'<play>:<what>'}         first device to ask gets "ok" (do it once per play), others "taken"
+//   POST /yarg/menusync   {on:true}                     the menu song started from the top: follow it (approximate)
+//   GET  /yarg/tab/track?id=pro-guitar|gp0…              tablature for one track of the current song (times in song seconds)
+//   POST /yarg/tab/upload?name=file.gp5  (raw bytes)     attach a Guitar Pro file to the current YARG song
+//   POST /yarg/tab/offset {offset:n|null}               which chart bar the tab starts on (null = automatic)
+//   POST /yarg/tab/remove                               detach (delete) the current song's Guitar Pro file
+//   POST /yarg/tab/tuning {track, tuning:[midi…]|null}  set a track's tuning for this song (null = as the chart/file says)
 //   POST /live/doc        {songs, setlists, currentSetlistId}   LIVE tab song library + setlists (live-songs.json)
 //   POST /live/active     {songId, sectionId}           what's loaded now (shown on every device)
 
@@ -26,6 +36,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createYarg } from './yarg.mjs';
+import { createTabs } from './tabs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const XR_PORT = 10024;
@@ -53,7 +65,7 @@ if (args.log) {
   process.stderr.write = write;
 }
 
-let config = { host: '', httpPort: 8899 };
+let config = { host: '', httpPort: 8899, yargDir: '', yargAuto: false };
 try { config = { ...config, ...JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) }; } catch {}
 if (args.host !== undefined) config.host = args.host;
 if (args.port) config.httpPort = Number(args.port);
@@ -233,6 +245,13 @@ function learn(a, val) {
   broadcast({ type: 'learn', entry: learned[0] });
 }
 
+function readRaw(req, limit = 16 << 20) {
+  return new Promise((resolve, reject) => {
+    const parts = []; let n = 0;
+    req.on('data', (d) => { n += d.length; if (n > limit) { reject(new Error('file too large')); req.destroy(); } else parts.push(d); });
+    req.on('end', () => resolve(Buffer.concat(parts)));
+  });
+}
 function readBody(req) {
   return new Promise((resolve) => {
     let s = '';
@@ -250,7 +269,7 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.write(`data: ${JSON.stringify({ type: 'snapshot', mixer, values: state, learned, live, lan: lanIps() })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'snapshot', mixer, values: state, learned, live, lan: lanIps(), yarg: { ...yarg.snapshot(), auto: config.yargAuto } })}\n\n`);
     clients.add(res);
     if (clients.size === 1) send('/meters', [{ t: 's', v: '/meters/1' }]);
     const ka = setInterval(() => res.write(': ka\n\n'), 15000);
@@ -299,6 +318,26 @@ const server = http.createServer(async (req, res) => {
     broadcast({ type: 'liveActive', active: live.active });
     return res.end('ok');
   }
+  if (req.method === 'POST' && url.pathname === '/yarg/claim') {
+    const body = await readBody(req);
+    return res.end(yarg.claim(body.key) ? 'ok' : 'taken');
+  }
+  if (url.pathname.startsWith('/yarg/tab/')) {
+    const json = (code, obj) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); };
+    try {
+      if (url.pathname === '/yarg/tab/track') { const t = tabs.track(url.searchParams.get('id')); return t ? json(200, t) : json(404, { error: 'no such track' }); }
+      if (req.method !== 'POST') return json(405, { error: 'POST' });
+      if (url.pathname === '/yarg/tab/upload') return json(200, { file: await tabs.upload(url.searchParams.get('name') || '', await readRaw(req)) });
+      if (url.pathname === '/yarg/tab/offset') { const b = await readBody(req); return json(200, { ok: tabs.setOffset(typeof b.offset === 'number' ? b.offset : null) }); }
+      if (url.pathname === '/yarg/tab/remove') return json(200, { ok: tabs.remove() });
+      if (url.pathname === '/yarg/tab/tuning') { const b = await readBody(req); return json(200, { ok: tabs.setTuning(b.track, b.tuning ?? null) }); }
+    } catch (e) { return json(400, { error: e.message }); }
+    return json(404, { error: 'not found' });
+  }
+  if (req.method === 'POST' && url.pathname === '/yarg/menusync') {
+    const body = await readBody(req);
+    return res.end(yarg.confirmMenu(body.on !== false) ? 'ok' : 'no');
+  }
   if (req.method === 'POST' && url.pathname === '/config') {
     const body = await readBody(req);
     if (typeof body.host === 'string') {
@@ -308,11 +347,25 @@ const server = http.createServer(async (req, res) => {
       broadcast({ type: 'status', mixer });
       send('/xinfo', [], config.host || '255.255.255.255');
     }
+    if (typeof body.yargDir === 'string') {
+      config.yargDir = body.yargDir.trim();
+      saveConfig();
+      yarg.setDir();
+    }
+    if (typeof body.yargAuto === 'boolean') {
+      config.yargAuto = body.yargAuto;
+      saveConfig();
+      broadcast({ type: 'yargAuto', on: config.yargAuto });
+    }
     return res.end('ok');
   }
   res.statusCode = 404;
   res.end('not found');
 });
+
+// ---------- YARG ----------
+const tabs = createTabs({ dataDir: DATA_DIR, log, broadcast });
+const yarg = createYarg({ log, broadcast, getDir: () => config.yargDir, tabs });
 
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE') { log(`port ${config.httpPort} in use — bridge already running?`); process.exit(0); }

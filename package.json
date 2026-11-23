@@ -1,23 +1,41 @@
 {
   "name": "reaper-xair-live-console",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Web controller for REAPER + Behringer X Air (XR18/XR16/XR12/X18) for live shows: mixer, FX presets, songs/setlists, monitor buses, artist phone pages.",
   "type": "module",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/lilBadWolf/reaper-xair-live-console.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lilBadWolf/reaper-xair-live-console.git"
+  },
   "homepage": "https://github.com/lilBadWolf/reaper-xair-live-console#readme",
-  "bugs": { "url": "https://github.com/lilBadWolf/reaper-xair-live-console/issues" },
+  "bugs": {
+    "url": "https://github.com/lilBadWolf/reaper-xair-live-console/issues"
+  },
   "private": true,
-  "engines": { "node": ">=18" },
-  "keywords": ["reaper", "behringer", "xr18", "x-air", "osc", "live", "mixer", "vue"],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "reaper",
+    "behringer",
+    "xr18",
+    "x-air",
+    "osc",
+    "live",
+    "mixer",
+    "vue"
+  ],
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "deploy": "node scripts/setup.mjs --deploy-only",
     "build": "vite build",
     "dev": "vite",
-    "bridge": "node bridge/xr18-bridge.mjs"
+    "bridge": "node bridge/xr18-bridge.mjs",
+    "yarg": "sh yarg/start-yarg.sh"
   },
   "dependencies": {
+    "@coderline/alphatab": "1.8.4",
     "uqr": "^0.1.2",
     "vue": "^3.5.46"
   },
