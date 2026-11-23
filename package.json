@@ -1,0 +1,26 @@
+{
+  "name": "reaper-xair-live-console",
+  "version": "1.0.0",
+  "description": "Web controller for REAPER + Behringer X Air (XR18/XR16/XR12/X18) for live shows: mixer, FX presets, songs/setlists, monitor buses, artist phone pages.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "keywords": ["reaper", "behringer", "xr18", "x-air", "osc", "live", "mixer", "vue"],
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "deploy": "node scripts/setup.mjs --deploy-only",
+    "build": "vite build",
+    "dev": "vite",
+    "bridge": "node bridge/xr18-bridge.mjs"
+  },
+  "dependencies": {
+    "uqr": "^0.1.2",
+    "vue": "^3.5.46"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.11",
+    "vite": "^6.4.6",
+    "vite-plugin-singlefile": "^2.3.4"
+  }
+}

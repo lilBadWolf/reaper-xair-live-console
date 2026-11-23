@@ -1,0 +1,19 @@
+# dependencies / build output
+node_modules/
+dist/
+
+# local install choices (written by `npm run setup`)
+.setup.json
+
+# user data: songs, setlists, mixer address, logs
+# (normally in <REAPER resource folder>/LiveConsole; these cover running the bridge by hand)
+data/
+bridge/*.json
+bridge/*.bak
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
