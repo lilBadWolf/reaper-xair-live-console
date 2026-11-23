@@ -37,12 +37,17 @@ whole-song sound recalls for every channel at once, monitor mixes, and a QR code
 
 ## Install
 
+In a terminal on the computer that runs REAPER:
+
 ```sh
-git clone <this repo> live-console
-cd live-console
+git clone https://github.com/lilBadWolf/reaper-xair-live-console.git
+cd reaper-xair-live-console
 npm install
 npm run setup
 ```
+
+No git? [Download the ZIP](https://github.com/lilBadWolf/reaper-xair-live-console/archive/refs/heads/main.zip), unzip it anywhere you like, and run `npm install` and `npm run setup` inside the folder.
+Keep the folder: REAPER runs the helper script and the mixer bridge from it, so moving or deleting it disconnects Live Console (run `npm run setup` again after moving it).
 
 `npm run setup` finds your REAPER resource folder and does three things:
 
@@ -66,7 +71,8 @@ Setup options: `--reaper "<resource folder>"` (portable installs, or if auto-det
 ### Updating
 
 ```sh
-git pull
+cd reaper-xair-live-console
+git pull           # (ZIP install: download the new ZIP and unzip it over the old folder)
 npm install
 npm run deploy     # rebuilds and re-copies the page
 ```
@@ -138,6 +144,11 @@ Notes on the protocols:
 - REAPER's web server truncates request URLs at about 1 KB, so the page only sends short commands. Bulk data (FX state) is written by the Lua script.
 - X Air OSC values are normalised floats; the scales in `lib/xrparams.js` were checked against the mixer's own `/node` text output.
 - `/meters/1` delivers 40 levels about every 100 ms (fixed by the mixer): ch 1–16, aux L/R, FX returns 1–4 L/R, buses 1–6, FX sends 1–4, main L/R, monitor L/R.
+
+## Feedback
+
+Bug reports and ideas are welcome in [Issues](https://github.com/lilBadWolf/reaper-xair-live-console/issues). It especially helps to hear how it does on X Air models other than the XR18, and on Windows or Linux.
+Include your mixer model and firmware, REAPER version, OS, and `LiveConsole/bridge.log` if the mixer side is involved.
 
 ## License
 
