@@ -79,7 +79,7 @@ function remove() {
 </script>
 
 <template>
-  <Modal :title="existing ? 'Edit song' : 'New song'" subtitle="Live" width="760px" @close="closeModal">
+  <Modal :title="existing ? 'Edit song' : 'New song'" subtitle="Sets" width="760px" @close="closeModal">
     <template #actions>
       <button class="primary" @click="save">Save</button>
     </template>

@@ -27,13 +27,19 @@
 //   POST /yarg/tab/offset {offset:n|null}               which chart bar the tab starts on (null = automatic)
 //   POST /yarg/tab/remove                               detach (delete) the current song's Guitar Pro file
 //   POST /yarg/tab/tuning {track, tuning:[midi…]|null}  set a track's tuning for this song (null = as the chart/file says)
+//   GET  /yarg/lanes                                    the Lanes view's notes: every guitar/bass/drums/keys part of the song shown
+//   POST /yarg/tab/find                                 open the Ultimate Guitar search for the song in this computer's browser (this computer only)
 //   POST /live/doc        {songs, setlists, currentSetlistId}   LIVE tab song library + setlists (live-songs.json)
 //   POST /live/active     {songId, sectionId}           what's loaded now (shown on every device)
+//   POST /quit                                          exit (localhost only; a new bridge replacing one that lost the mixer)
+//   POST /restart                                       start a fresh copy of the bridge and exit (this computer only)
 
 import dgram from 'node:dgram';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
+import { execFile, spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createYarg } from './yarg.mjs';
@@ -48,6 +54,20 @@ const args = Object.fromEntries(
     return acc;
   }, []),
 );
+
+// Started by /restart: wait for the copy that started us to be gone (it holds the ports until it exits).
+if (args.after) {
+  for (let i = 0; i < 50; i++) {
+    try { process.kill(Number(args.after), 0); } catch { break; }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+// Fingerprint of the bridge's code, so `npm run deploy` can tell whether the running bridge is out of date
+// (scripts/setup.mjs computes the same thing from the files on disk).
+const CODE = crypto.createHash('sha1');
+for (const f of fs.readdirSync(HERE).filter((f) => f.endsWith('.mjs')).sort()) CODE.update(f).update(fs.readFileSync(path.join(HERE, f)));
+const CODE_HASH = CODE.digest('hex').slice(0, 12);
 
 // User data lives outside the code (so updates/git never touch it).
 const DATA_DIR = path.resolve(args.data || process.env.LIVE_CONSOLE_DATA || path.join(HERE, '..', 'data'));
@@ -86,6 +106,13 @@ function saveLive() {
 const lanIps = () => Object.entries(os.networkInterfaces())
   .flatMap(([name, list]) => (list || []).filter((a) => a.family === 'IPv4' && !a.internal).map((a) => ({ name, ip: a.address })))
   .sort((a, b) => (a.name.startsWith('en') ? 0 : 1) - (b.name.startsWith('en') ? 0 : 1));
+
+// Is this request from this computer (localhost, or one of its own addresses)? Pages open here get the
+// Guitar Pro buttons; downloads land in this computer's Downloads folder.
+const isLocal = (req) => {
+  const a = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  return a === '127.0.0.1' || a === '::1' || Object.values(os.networkInterfaces()).flat().some((i) => i?.address === a);
+};
 
 const log = (...m) => console.log(new Date().toISOString(), ...m);
 
@@ -146,9 +173,18 @@ function openSocket() {
   lastOpen = Date.now();
 }
 
+// Send failures are logged when the error changes (not on every packet), and once more when sends work again.
+// e.g. EHOSTUNREACH here while the mixer answers other apps = macOS Local Network permission for the app that launched us.
+let sendErr = '';
+function sendDone(e) {
+  const m = e ? `${e.code || ''} ${e.message}`.trim() : '';
+  if (m === sendErr) return;
+  log(m ? `sending to the mixer failed: ${m}` : 'sending to the mixer works again');
+  sendErr = m;
+}
 function send(address, list = [], host = config.host) {
   if (!host || !sock) return;
-  try { sock.send(encode(address, list), XR_PORT, host, () => {}); } catch {} // errors: see 'error' above
+  try { sock.send(encode(address, list), XR_PORT, host, sendDone); } catch (e) { sendDone(e); }
 }
 
 // Addresses we keep in sync. The web app may ask for more via /query.
@@ -285,7 +321,7 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.write(`data: ${JSON.stringify({ type: 'snapshot', mixer, values: state, learned, live, lan: lanIps(), yarg: { ...yarg.snapshot(), auto: config.yargAuto } })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'snapshot', mixer, values: state, learned, live, lan: lanIps(), local: isLocal(req), yarg: { ...yarg.snapshot(), auto: config.yargAuto } })}\n\n`);
     clients.add(res);
     if (clients.size === 1) send('/meters', [{ t: 's', v: '/meters/1' }]);
     const ka = setInterval(() => res.write(': ka\n\n'), 15000);
@@ -294,7 +330,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/status') {
     res.setHeader('Content-Type', 'application/json');
-    return res.end(JSON.stringify({ mixer, config, clients: clients.size, lan: lanIps() }));
+    return res.end(JSON.stringify({ mixer, config, clients: clients.size, lan: lanIps(), code: CODE_HASH, pid: process.pid }));
   }
   if (req.method === 'POST' && url.pathname === '/send') {
     const body = await readBody(req);
@@ -338,6 +374,10 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     return res.end(yarg.claim(body.key) ? 'ok' : 'taken');
   }
+  if (url.pathname === '/yarg/lanes') {
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify(yarg.lanes()));
+  }
   if (url.pathname.startsWith('/yarg/tab/')) {
     const json = (code, obj) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(obj)); };
     try {
@@ -346,6 +386,14 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/yarg/tab/upload') return json(200, { file: await tabs.upload(url.searchParams.get('name') || '', await readRaw(req)) });
       if (url.pathname === '/yarg/tab/offset') { const b = await readBody(req); return json(200, { ok: tabs.setOffset(typeof b.offset === 'number' ? b.offset : null) }); }
       if (url.pathname === '/yarg/tab/remove') return json(200, { ok: tabs.remove() });
+      if (url.pathname === '/yarg/tab/find') {
+        if (!isLocal(req)) return json(403, { error: 'Only from the REAPER computer' });
+        const link = tabs.find();
+        if (!link) return json(409, { error: 'No YARG song is playing' });
+        const [cmd, args] = process.platform === 'darwin' ? ['open', [link]] : process.platform === 'win32' ? ['explorer', [link]] : ['xdg-open', [link]];
+        execFile(cmd, args, (e) => { if (e) log('Tabs: could not open the browser:', e.message); });
+        return json(200, { url: link });
+      }
       if (url.pathname === '/yarg/tab/tuning') { const b = await readBody(req); return json(200, { ok: tabs.setTuning(b.track, b.tuning ?? null) }); }
     } catch (e) { return json(400, { error: e.message }); }
     return json(404, { error: 'not found' });
@@ -375,6 +423,18 @@ const server = http.createServer(async (req, res) => {
     }
     return res.end('ok');
   }
+  if (req.method === 'POST' && url.pathname === '/restart') {
+    if (!isLocal(req)) { res.statusCode = 403; return res.end('only from the REAPER computer'); }
+    res.end('ok');
+    return setTimeout(() => restart('asked to'), 50);
+  }
+  if (req.method === 'POST' && url.pathname === '/quit') {
+    // only from this computer: a newly launched bridge replacing this one (see server.on('error'))
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) { res.statusCode = 403; return res.end('local only'); }
+    log('replaced by a newly launched bridge: exiting');
+    res.end('ok');
+    return setTimeout(() => process.exit(0), 100);
+  }
   res.statusCode = 404;
   res.end('not found');
 });
@@ -382,9 +442,40 @@ const server = http.createServer(async (req, res) => {
 // ---------- YARG ----------
 const tabs = createTabs({ dataDir: DATA_DIR, log, broadcast });
 const yarg = createYarg({ log, broadcast, getDir: () => config.yargDir, tabs });
+tabs.watchDownloads(path.join(os.homedir(), 'Downloads'));
 
-server.on('error', (e) => {
-  if (e.code === 'EADDRINUSE') { log(`port ${config.httpPort} in use — bridge already running?`); process.exit(0); }
-  throw e;
+// Restart: start a copy of ourselves (same arguments) and exit; it waits for us to be gone (--after). The copy is
+// our child, so macOS still counts it as launched by whatever launched us (REAPER): the Local Network permission
+// carries over, which it wouldn't if it were started from a terminal or an editor.
+function restart(reason) {
+  log(`restarting (${reason})`);
+  const argv = process.argv.slice(1);
+  const i = argv.indexOf('--after');
+  if (i >= 0) argv.splice(i, 2);
+  spawn(process.execPath, [...argv, '--after', String(process.pid)], { detached: true, stdio: 'ignore', cwd: process.cwd() }).unref();
+  server.close();
+  for (const c of clients) c.end(); // pages reconnect to the new copy by themselves
+  setTimeout(() => process.exit(0), 100);
+}
+
+// Port taken: another bridge is running. Keep it if it's talking to the mixer; otherwise replace it. A bridge can go
+// deaf while still running, e.g. macOS cut its network access after the app that launched it quit, so relaunching
+// (restarting REAPER, re-running the script) must be able to recover without killing node by hand.
+let takeover = false;
+server.on('error', async (e) => {
+  if (e.code !== 'EADDRINUSE') throw e;
+  if (!takeover) {
+    takeover = true;
+    const base = `http://127.0.0.1:${config.httpPort}`;
+    const st = await fetch(`${base}/status`, { signal: AbortSignal.timeout(2000) }).then((r) => r.json()).catch(() => null);
+    if (st && !st.mixer?.connected) {
+      log(`a bridge is already running on :${config.httpPort} but isn't connected to the mixer: replacing it`);
+      await fetch(`${base}/quit`, { method: 'POST', signal: AbortSignal.timeout(2000) }).catch(() => {});
+      return setTimeout(() => server.listen(config.httpPort), 1000); // the first listen() already registered onListening
+    }
+  }
+  log(`port ${config.httpPort} in use — bridge already running?`);
+  process.exit(0);
 });
-server.listen(config.httpPort, () => log(`Live Console bridge on :${config.httpPort}, mixer ${config.host || '(auto-discover)'}, data ${DATA_DIR}`));
+const onListening = () => log(`Live Console bridge ${CODE_HASH} on :${config.httpPort}, mixer ${config.host || '(auto-discover)'}, data ${DATA_DIR}`);
+server.listen(config.httpPort, onListening);

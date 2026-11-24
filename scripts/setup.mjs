@@ -2,14 +2,16 @@
 // Live Console setup: build the page, install it into REAPER, and hook the helper script into REAPER's startup.
 //
 //   npm run setup                      # first-time install (remembers choices in .setup.json)
-//   npm run deploy                     # after code changes: rebuild + copy the page only
+//   npm run deploy                     # after code changes: rebuild + copy the page, restart the bridge if its code changed
 //
 // Options:
 //   --reaper <dir>   REAPER resource folder (default: auto — Options > Show REAPER resource path in REAPER)
 //   --page <file>    page name in reaper_www_root (default: live-console.html)
 //   --deploy-only    skip the __startup.lua step
 //   --force          overwrite a page with the same name that wasn't made by Live Console
+//   --no-restart     leave a running bridge alone even if its code changed
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,6 +62,34 @@ if (fs.existsSync(target) && !flag('force') && !fs.readFileSync(target, 'utf8').
 }
 fs.copyFileSync(built, target);
 ok(`Installed page: reaper_www_root/${page}`);
+
+// ---------- 3b. a running bridge with older code: have it restart itself ----------
+// The bridge restarts by launching a copy of itself, so it keeps REAPER's network permission (see /restart).
+{
+  const bridgeDir = path.join(ROOT, 'bridge');
+  const h = crypto.createHash('sha1');
+  for (const f of fs.readdirSync(bridgeDir).filter((f) => f.endsWith('.mjs')).sort()) h.update(f).update(fs.readFileSync(path.join(bridgeDir, f)));
+  const code = h.digest('hex').slice(0, 12);
+  let port = 8899;
+  try { port = JSON.parse(fs.readFileSync(path.join(res, 'LiveConsole', 'bridge-config.json'), 'utf8')).httpPort || port; } catch {}
+  const base = `http://127.0.0.1:${port}`;
+  const status = () => fetch(`${base}/status`, { signal: AbortSignal.timeout(1500) }).then((r) => r.json()).catch(() => null);
+  const st = await status();
+  if (!st) ok('Bridge not running (REAPER starts it)');
+  else if (st.code === code) ok('Bridge is up to date');
+  else if (flag('no-restart')) warn('Bridge is running older code: restart it to use the changes (left alone: --no-restart)');
+  else {
+    const r = await fetch(`${base}/restart`, { method: 'POST', signal: AbortSignal.timeout(1500) }).catch(() => null);
+    if (!r || !r.ok) {
+      warn(`Bridge is running older code that can't restart itself. Once, by hand: curl -X POST ${base}/quit, then run reaper/live_console.lua from REAPER's Action list`);
+    } else {
+      let now = null;
+      for (let i = 0; i < 25 && now?.code !== code; i++) { await new Promise((r) => setTimeout(r, 200)); now = await status(); }
+      if (now?.code === code) ok(`Restarted the bridge (its code changed)${now.mixer?.connected ? '' : ' — not connected to the mixer yet'}`);
+      else warn('Asked the bridge to restart, but the new one isn\'t answering yet: check LiveConsole/bridge.log');
+    }
+  }
+}
 
 // ---------- 4. run the helper script at REAPER startup ----------
 const lua = path.join(ROOT, 'reaper', 'live_console.lua');

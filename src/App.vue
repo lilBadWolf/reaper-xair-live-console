@@ -22,7 +22,7 @@ import { route, go, trackHash } from './lib/router.js';
 import { yarg } from './lib/yarg.js';
 
 const TABS = [
-  { id: 'live', label: 'Live', comp: LiveView },
+  { id: 'live', label: 'Sets', comp: LiveView },
   { id: 'yarg', label: 'YARG', comp: YargView, auto: true }, // only while YARG is detected
   { id: 'mixer', label: 'Mixer', comp: MixerView },
   { id: 'fx', label: 'Effects', comp: FxView },
@@ -53,7 +53,7 @@ const playing = computed(() => reaper.playState === 1 || reaper.playState === 5)
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :class="{ artist: route.artist }">
     <header>
       <div class="brand" @pointerdown="holdStart" @pointerup="holdEnd" @pointerleave="holdEnd" @pointercancel="holdEnd">
         <span class="logo"><i /><i /><i /></span>
@@ -125,5 +125,12 @@ main { flex: 1; min-height: 0; min-width: 0; }
   .globals .big { flex: 1; min-width: 0; }
   nav { order: 4; width: 100%; }
   nav button { flex: 1; padding: 0 6px; }
+}
+/* performer page on a phone in landscape: a thin brand line (hold it to leave) */
+@media (max-height: 500px) {
+  .app.artist { gap: 4px; padding-top: max(4px, env(safe-area-inset-top)); }
+  .app.artist .title { font-size: 12px; }
+  .app.artist .logo { height: 12px; }
+  .app.artist .dot { font-size: 9px; padding: 1px 5px; }
 }
 </style>

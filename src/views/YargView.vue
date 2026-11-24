@@ -7,9 +7,10 @@ import LyricsPanel from '../components/LyricsPanel.vue';
 import PitchGuide from '../components/PitchGuide.vue';
 import ClickPanel from '../components/ClickPanel.vue';
 import TabPanel from '../components/TabPanel.vue';
-import { yarg, songTime, synced, fmtTime, partKeys, partKey, PART_LABELS, sectionIndexAt, setAuto, STAR_LABEL, shownSong, confirmMenu, tabTrackId, uploadTab, setTabOffset, removeTab, setTabTuning, TUNINGS, tuningName, tuningNotes } from '../lib/yarg.js';
+import LanesPanel from '../components/LanesPanel.vue';
+import { yarg, songTime, synced, fmtTime, partKeys, partKey, PART_LABELS, sectionIndexAt, setAuto, STAR_LABEL, shownSong, confirmMenu, tabTrackId, uploadTab, findTab, setTabOffset, removeTab, setTabTuning, TUNINGS, tuningName, tuningNotes } from '../lib/yarg.js';
 import { liveMatch } from '../lib/yargAuto.js';
-import { live, setlistSongs } from '../lib/live.js';
+import { live } from '../lib/live.js';
 import { reaper } from '../lib/reaper.js';
 import { settings } from '../lib/settings.js';
 import { route } from '../lib/router.js';
@@ -56,12 +57,6 @@ const showStreamHint = computed(() => yarg.song && !yarg.clock.stream && !stage.
 // ---------- Live songs ----------
 const matched = computed(() => liveMatch());
 const loadedHere = computed(() => matched.value && live.active.songId === matched.value.id);
-const upNext = computed(() => {
-  const list = setlistSongs();
-  const id = matched.value?.id || live.active.songId;
-  const i = list.findIndex((s) => s.id === id);
-  return i >= 0 ? list[i + 1] || null : null;
-});
 const autoProblem = computed(() => (!yarg.auto ? '' : !reaper.scriptAlive ? 'FX script not running' : ''));
 
 // ---------- scores ----------
@@ -97,13 +92,35 @@ async function onTabFile(e) {
   tabMsg.value = `Adding ${f.name}…`;
   try { await uploadTab(f); tabMsg.value = ''; } catch (err) { tabMsg.value = err.message; }
 }
+async function onFindTab() {
+  tabMsg.value = '';
+  try { await findTab(); tabMsg.value = 'Opened Ultimate Guitar in the browser. Download a Guitar Pro file there and it’s added to this song by itself.'; } catch (err) { tabMsg.value = err.message; }
+}
+// Lanes: which parts this device shows, and note speed
+const lanesRef = ref(null);
+const laneParts = computed(() => lanesRef.value?.available || []);
+const LANE_LABEL = { guitar: 'Guitar', rhythm: 'Rhythm', bass: 'Bass', drums: 'Drums', keys: 'Keys' };
+function toggleLane(k) {
+  const h = settings.lanesHidden;
+  settings.lanesHidden = h.includes(k) ? h.filter((x) => x !== k) : [...h, k];
+}
+const laneSpeed = (d) => { settings.lanesSpeed = Math.round(Math.min(3, Math.max(0.5, (settings.lanesSpeed || 1) + d)) * 10) / 10; };
 const shiftTab = (d) => setTabOffset((yarg.tabs?.offset || 0) + d);
+const tabBeat = computed(() => yarg.tabs?.beat || 0.25); // one beat of the song, in tab bars
+// tab bars, with the fraction as ¼ ½ ¾ ⅓ ⅔ when it's one of those: 1.25 → "1¼", -0.5 → "−½"
+const FRAC = { 25: '¼', 50: '½', 75: '¾', 33: '⅓', 67: '⅔' };
+function fmtBars(x) {
+  const n = Math.abs(x || 0), w = Math.floor(n + 1e-6), f = Math.round((n - w) * 100);
+  const frac = f === 0 ? '' : FRAC[f] ?? `.${String(f).padStart(2, '0')}`;
+  return `${x < -1e-6 ? '−' : ''}${w || !frac || frac[0] === '.' ? w : ''}${frac}`;
+}
 const tuningOptions = computed(() => TUNINGS[tabTrack.value?.strings] || []);
 const tuningValue = computed(() => (tabTrack.value?.tuningFrom === 'set' ? tabTrack.value.tuning.join(',') : ''));
 function pickTuning(v) { if (tabTrack.value) setTabTuning(tabTrack.value.id, v ? v.split(',').map(Number) : null); }
 function dropTab() { if (confirm(`Remove ${yarg.tabs?.file} from this song?`)) removeTab(); }
 function share() {
   if (mode.value === 'tab' && tabTrack.value) openModal('qr', { hash: `#yarg/tab/${tabTrack.value.id}`, title: `YARG tab · ${tabTrack.value.name}`, what: `Opens the ${tabTrack.value.kind} tab for whatever YARG is playing, in time, with no other controls.` });
+  else if (mode.value === 'lanes') openModal('qr', { hash: '#yarg/lanes', title: 'YARG lanes', what: 'Every part\'s notes (guitar, bass, drums, keys) for whatever YARG is playing, with the lyrics: for a screen facing the audience.' });
   else if (mode.value === 'click') openModal('qr', { hash: '#yarg/click', title: 'YARG click', what: 'A big beat counter for the drummer, following the song YARG is playing.' });
   else {
     const p = part.value && part.value !== 'vocals' ? `/${part.value}` : '';
@@ -153,6 +170,10 @@ function share() {
           <button aria-label="Smaller text" @click="zoom(-0.1)">A−</button>
           <button aria-label="Larger text" @click="zoom(0.1)">A+</button>
         </template>
+        <template v-if="mode === 'lanes'">
+          <button aria-label="Slower notes" title="Slower notes" @click="laneSpeed(-0.1)">🐢</button>
+          <button aria-label="Faster notes" title="Faster notes" @click="laneSpeed(0.1)">🐇</button>
+        </template>
         <button v-if="!stage" class="qr" title="Open on a performer's phone" @click="share">
           <svg viewBox="0 0 24 24"><path d="M3 3h8v8H3zm2 2v4h4V5zm8-2h8v8h-8zm2 2v4h4V5zM3 13h8v8H3zm2 2v4h4v-4zm11-2h2v2h-2zm-3 0h2v4h-2zm3 3h5v2h-5zm3-3h2v2h-2zm-6 5h2v3h-2zm3 1h2v2h-2zm3 0h2v2h-2z" /></svg>
         </button>
@@ -164,6 +185,7 @@ function share() {
       <div v-if="!route.mode" class="seg">
         <button :class="{ on: mode === 'lyrics' }" @click="localMode = 'lyrics'">Lyrics</button>
         <button :class="{ on: mode === 'tab' }" @click="localMode = 'tab'">Tab</button>
+        <button :class="{ on: mode === 'lanes' }" @click="localMode = 'lanes'">Lanes</button>
         <button :class="{ on: mode === 'click' }" @click="localMode = 'click'">Click</button>
       </div>
       <template v-if="mode === 'lyrics' && cur">
@@ -172,16 +194,19 @@ function share() {
         </div>
         <button v-if="hasNotes" class="chip" :class="{ on: settings.pitchGuide }" @click="settings.pitchGuide = !settings.pitchGuide">Pitch</button>
       </template>
+      <div v-if="mode === 'lanes' && cur && !stage && laneParts.length > 1" class="seg parts" title="Parts shown on this device">
+        <button v-for="k in laneParts" :key="k" :class="{ on: !settings.lanesHidden.includes(k) }" @click="toggleLane(k)">{{ LANE_LABEL[k] }}</button>
+      </div>
       <template v-if="mode === 'tab' && cur">
         <div v-if="tabTracks.length > 1" class="seg parts">
           <button v-for="t in tabTracks" :key="t.id" :class="{ on: tabId === t.id }" :title="`${t.count} notes`" @click="pickTab(t)">{{ t.name }}</button>
         </div>
         <span v-if="stage && tabTrack" class="tuning ro">{{ tuningName(tabTrack.tuning) }} · {{ tuningNotes(tabTrack.tuning) }}</span>
         <template v-if="!stage">
-          <span v-if="yarg.tabs?.file && tabTrack?.source === 'gp'" class="offset" title="Which bar of the song the tab's first bar lines up with">
+          <span v-if="yarg.tabs?.file && tabTrack?.source === 'gp'" class="offset" title="Which bar of the song the tab's first bar lines up with: « » move a bar, ‹ › a beat">
             Bar offset
-            <button aria-label="Earlier" @click="shiftTab(-1)">‹</button><b>{{ yarg.tabs.offset }}</b><button aria-label="Later" @click="shiftTab(1)">›</button>
-            <button class="autob" :class="{ on: yarg.tabs.auto }" @click="setTabOffset(null)">Auto{{ yarg.tabs.auto ? '' : ` (${yarg.tabs.autoOffset})` }}</button>
+            <button aria-label="A bar earlier" title="A bar earlier" @click="shiftTab(-1)">«</button><button aria-label="A beat earlier" title="A beat earlier" @click="shiftTab(-tabBeat)">‹</button><b>{{ fmtBars(yarg.tabs.offset) }}</b><button aria-label="A beat later" title="A beat later" @click="shiftTab(tabBeat)">›</button><button aria-label="A bar later" title="A bar later" @click="shiftTab(1)">»</button>
+            <button class="autob" :class="{ on: yarg.tabs.auto }" @click="setTabOffset(null)">Auto{{ yarg.tabs.auto ? '' : ` (${fmtBars(yarg.tabs.autoOffset)})` }}</button>
             <span v-if="yarg.tabs.match != null" class="match-pct" :class="{ low: yarg.tabs.match < 0.4 }" title="How many of the tab's notes land on the chart's notes">match {{ Math.round(yarg.tabs.match * 100) }}%</span>
             <span v-if="yarg.tabs.changes?.length" class="ratio" :title="'Sections placed differently from the tab to follow the recording'">{{ yarg.tabs.changes.map((c) => `${c.name} ${c.shift === null ? 'left out' : `${c.shift > 0 ? '+' : ''}${c.shift} bars`}`).join(' · ') }}</span>
             <span v-if="yarg.tabs.ratio && yarg.tabs.ratio !== 1" class="ratio" title="The tab counts bars differently from the chart">{{ yarg.tabs.ratio < 1 ? `${Math.round(1 / yarg.tabs.ratio)} tab bars = 1 song bar` : `1 tab bar = ${yarg.tabs.ratio} song bars` }}</span>
@@ -194,9 +219,11 @@ function share() {
               <option v-for="[n, t] in tuningOptions" :key="n" :value="t.join(',')">{{ n }} — {{ tuningNotes(t) }}</option>
             </select>
           </label>
-          <button class="chip" :title="yarg.tabs?.file ? `Replace ${yarg.tabs.file}` : 'Add a Guitar Pro file for this song'" @click="fileInput.click()">{{ yarg.tabs?.file ? 'Replace file' : '+ Guitar Pro file' }}</button>
-          <button v-if="yarg.tabs?.file" class="chip" title="Remove the Guitar Pro file from this song" @click="dropTab">✕</button>
-          <input ref="fileInput" type="file" accept=".gp,.gpx,.gp5,.gp4,.gp3" hidden @change="onTabFile" />
+          <template v-if="yarg.local">
+            <button v-if="yarg.tabs?.file" class="chip" :title="`Replace ${yarg.tabs.file}`" @click="fileInput.click()">Replace file</button>
+            <button v-if="yarg.tabs?.file" class="chip" title="Remove the Guitar Pro file from this song" @click="dropTab">✕</button>
+            <input ref="fileInput" type="file" accept=".gp,.gpx,.gp5,.gp4,.gp3" hidden @change="onTabFile" />
+          </template>
         </template>
       </template>
       <div v-if="!stage" class="auto">
@@ -204,7 +231,6 @@ function share() {
           Live song: <b>{{ matched.name }}</b><template v-if="loadedHere"> ✓</template>
         </span>
         <span v-else-if="yarg.song && yarg.auto" class="match warn">No Live song named “{{ yarg.song.name }}”</span>
-        <span v-if="upNext" class="match">Up next: <b>{{ upNext.name }}</b></span>
         <span v-if="autoProblem" class="match warn">{{ autoProblem }}</span>
         <button class="chip" :class="{ on: yarg.auto }" title="When YARG starts a song, load the Live song with the same name and follow its sections" @click="setAuto(!yarg.auto)">
           Auto-load {{ yarg.auto ? 'on' : 'off' }}
@@ -224,12 +250,16 @@ function share() {
       </div>
       <template v-if="cur && yarg.lyrics">
         <ClickPanel v-if="mode === 'click'" />
+        <LanesPanel v-else-if="mode === 'lanes'" ref="lanesRef" />
         <template v-else-if="mode === 'tab'">
           <TabPanel v-if="tabTrack" :key="tabTrack.id" :track-id="tabTrack.id" />
           <div v-else class="empty">
             <p>No tab for this song.</p>
-            <p class="small">Songs with Pro Guitar/Bass in the chart have one automatically. For others, add a Guitar Pro file (.gp, .gpx, .gp5, .gp4, .gp3){{ stage ? ' on the YARG tab' : '' }}: it lines up with the song's bars by itself.</p>
-            <button v-if="!stage" class="chip on" @click="fileInput.click()">+ Guitar Pro file</button>
+            <p class="small">Songs with Pro Guitar/Bass in the chart have one automatically. For others, add a Guitar Pro file (.gp, .gpx, .gp5, .gp4, .gp3){{ stage || !yarg.local ? ' on the REAPER computer' : '' }}: it lines up with the song's bars by itself.</p>
+            <div v-if="!stage && yarg.local" class="find">
+              <button class="chip on" title="Search Ultimate Guitar for this song's Guitar Pro tabs; a file you download is added by itself" @click="onFindTab">Find tab</button>
+              <button class="chip" @click="fileInput.click()">+ Guitar Pro file</button>
+            </div>
           </div>
         </template>
         <template v-else>
@@ -298,6 +328,7 @@ function share() {
 .seg.parts button { flex: none; white-space: nowrap; }
 .seg button.on { background: var(--btn); color: var(--text); box-shadow: inset 0 -2px 0 #b48cff; }
 .chip { height: 38px; padding: 0 12px; border-radius: 10px; background: var(--btn); border: 1px solid var(--line); color: var(--muted); font-weight: 700; font-size: 13px; }
+.find { display: flex; gap: 8px; justify-content: center; }
 .chip.on { color: var(--accent); border-color: var(--accent); }
 .offset { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
 .offset b { min-width: 22px; text-align: center; color: var(--text); font-variant-numeric: tabular-nums; }
@@ -351,5 +382,28 @@ function share() {
   .title { font-size: 20px; }
   .auto { margin-left: 0; justify-content: flex-start; }
   .best { display: none; }
+  .stage .np { padding: 8px 12px; }
+  .stage .sub { display: none; }
+  .stage .prog { margin-top: 4px; }
+}
+/* phone in landscape, performer page: one slim strip on top so the tab/lyrics get the height */
+@media (max-height: 500px) {
+  .stage { gap: 6px; }
+  .stage .top { flex-wrap: nowrap; gap: 6px; }
+  .stage .np { flex: 1; flex-basis: auto; display: flex; align-items: center; gap: 10px; padding: 5px 12px; border-radius: 12px; }
+  .stage .np .lbl { flex: none; }
+  .stage .best, .stage .sub { display: none; }
+  .stage .title { font-size: 16px; margin: 0; min-width: 0; flex: 0 1 auto; }
+  .stage .prog { flex: 1; min-width: 90px; margin-top: 0; }
+  .stage .secbox { order: 0; width: auto; max-width: 34%; flex-direction: row; align-items: baseline; gap: 8px; padding: 5px 12px; border-radius: 12px; }
+  .stage .secbox .lbl { display: none; }
+  .stage .secbox .cur { font-size: 15px; }
+  .stage .tools { flex-direction: row; gap: 4px; }
+  .stage .tools button { min-height: 0; height: auto; width: 40px; border-radius: 8px; }
+  .stage .bar2 { gap: 6px; flex-wrap: nowrap; }
+  .stage .seg.parts { flex: 0 1 auto; min-width: 0; }
+  .stage .tuning.ro { flex: none; font-size: 12px; }
+  .stage .seg button { height: 26px; }
+  .stage .sheet { padding: 4px 12px 2px; border-radius: 12px; }
 }
 </style>

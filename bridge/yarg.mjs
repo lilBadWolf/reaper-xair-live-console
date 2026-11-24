@@ -15,7 +15,7 @@
 //  * Also:   BPM, pause state, whether YARG is running (the YARG tab only shows then), YARG's scores,
 //            and claims (so only one device auto-loads the matching Live song).
 //
-// Exports createYarg({ log, broadcast, getDir, tabs }) -> { snapshot(), setDir(), claim(key), confirmMenu(on), close() }
+// Exports createYarg({ log, broadcast, getDir, tabs }) -> { snapshot(), lanes(), setDir(), claim(key), confirmMenu(on), close() }
 // SSE messages: yarg {yarg: snapshot}, yargClock {clock}, yargBeat {k: 0 bar | 1 strong | 2 weak}
 
 import dgram from 'node:dgram';
@@ -23,6 +23,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { midiLanes, chartLanes } from './lanes.mjs';
 
 export const YARG_UDP_PORT = Number(process.env.LC_YARG_PORT) || 36107; // env override: for testing next to a running YARG
 
@@ -180,8 +181,9 @@ function parseMidi(buf) {
           if (type === 0x03 && !tr.name) tr.name = decodeText(data).trim();
           if (type === 0x2f) break;
           tr.events.push({ tick, meta: type, data });
-        } else if (b === 0xf0 || b === 0xf7) { // sysex
-          p++; p += vlq();
+        } else if (b === 0xf0 || b === 0xf7) { // sysex: kept apart (Phase Shift open/tap markers, see lanes.mjs)
+          p++; const l = vlq();
+          (tr.sysex ||= []).push({ tick, data: buf.subarray(p, p + l) }); p += l;
         } else {
           if (b & 0x80) { status = b; p++; } // else: running status
           if (!status) { p++; continue; }
@@ -243,7 +245,7 @@ function parseMidi(buf) {
     const tr = byName(name);
     if (tr) onsets[key] = [...new Set(tr.events.filter((e) => e.on && e.note >= 96 && e.note <= 100).map((e) => e.tick))].sort((a, b) => a - b).map((t) => Math.round(sec(t) * 1000) / 1000);
   }
-  return { parts, sections, beats: beats.map((b) => [Math.round(sec(b.tick) * 10000) / 10000, b.k]), pro, onsets };
+  return { parts, sections, beats: beats.map((b) => [Math.round(sec(b.tick) * 10000) / 10000, b.k]), pro, onsets, lanes: midiLanes(tracks, res, sec, decodeText) };
 }
 
 // Rock Band 3 Pro Guitar/Bass, expert: notes 96-101 = strings low E..high e, velocity - 100 = fret,
@@ -387,6 +389,7 @@ function parseChart(text) {
     beats: beatTicks(res, sigs, lastTick).map((b) => [Math.round(sec(b.tick) * 10000) / 10000, b.k]),
     pro: {},
     onsets,
+    lanes: chartLanes(sections, res, sec),
   };
 }
 
@@ -492,6 +495,7 @@ export function createYarg({ log, broadcast, getDir, tabs = null }) {
   let song = null;          // { name, artist, album, charter, year, length, location }
   let lyrics = null;        // { parts: { vocals|harm1|harm2|harm3: { phrases, notes } }, sections, beats } | { error }
   let measures = [];        // bar-line times, kept here for syncing
+  let songLanes = null;     // every five-fret/drum part of the song, for the Lanes view (lanes.mjs); fetched, not broadcast
   let menuSong = null;      // what YARG plays in its menus: { name, artist, album, year }
   let results = null;       // { last: last finished song's scores, best: best band result for the current song }
   let play = 0;             // +1 every time a song (re)starts: lets devices act once per play
@@ -627,7 +631,7 @@ export function createYarg({ log, broadcast, getDir, tabs = null }) {
     let entry = null;
     if (raw) { try { entry = JSON.parse(raw); } catch { lastRaw = null; return; } } // half-written: retry next poll
     if (!entry) {
-      if (song) { song = null; lyrics = null; measures = []; results = { ...results, best: null }; tabs?.setSong(null); broadcast({ type: 'yarg', yarg: info() }); setDetected(); pollMenuSong(); }
+      if (song) { song = null; lyrics = null; songLanes = null; measures = []; results = { ...results, best: null }; tabs?.setSong(null); broadcast({ type: 'yarg', yarg: info() }); setDetected(); pollMenuSong(); }
       return;
     }
     const strip = (s) => String(s ?? '').replace(/<[^>]*>/g, '');
@@ -643,11 +647,13 @@ export function createYarg({ log, broadcast, getDir, tabs = null }) {
       const l = loadLyrics(song.location);
       measures = l.measures;
       lyrics = { parts: l.parts, sections: l.sections, beats: l.beats };
+      songLanes = l.lanes || null;
       tabs?.setSong({ name: song.name, artist: song.artist }, l);
       const n = Object.entries(l.parts).map(([k, v]) => `${k} ${v.phrases.length}`).join(', ');
       log(`YARG: ${song.artist} - ${song.name} (${n || 'no vocals'})`);
     } catch (e) {
       measures = [];
+      songLanes = null;
       lyrics = { error: e.message };
       tabs?.setSong({ name: song.name, artist: song.artist }, null);
       log(`YARG: ${song.artist} - ${song.name}: no lyrics (${e.message})`);
@@ -667,6 +673,7 @@ export function createYarg({ log, broadcast, getDir, tabs = null }) {
   // YARG doesn't say when the menu music is paused or skipped back, so this is approximate.
   let menuPlay = null;      // { file, start (wall s) | null, length, synced }
   let menuLyrics = null;
+  let menuLanes = null;
   let lastLoadAt = -1e9;    // wall time of the last "Loaded N stems" seen in the menus
   let launchFresh = false;  // YARG started since we've been watching: its first menu song is the menu player's
 
@@ -688,11 +695,11 @@ export function createYarg({ log, broadcast, getDir, tabs = null }) {
 
   function setMenu(file, start, synced) {
     menuPlay = file ? { file, start, length: 0, synced } : null;
-    menuSong = null; menuLyrics = null;
+    menuSong = null; menuLyrics = null; menuLanes = null;
     if (file) {
       try { menuSong = songInfo(file); menuPlay.length = menuSong.length || 0; } catch { menuSong = { name: path.basename(file).replace(/\.sng$/i, ''), artist: '' }; }
       let chartData = null;
-      try { chartData = loadLyrics(file); menuLyrics = { parts: chartData.parts, sections: chartData.sections, beats: chartData.beats }; } catch (e) { menuLyrics = { error: e.message }; }
+      try { chartData = loadLyrics(file); menuLyrics = { parts: chartData.parts, sections: chartData.sections, beats: chartData.beats }; menuLanes = chartData.lanes || null; } catch (e) { menuLyrics = { error: e.message }; }
       tabs?.setSong({ name: menuSong.name, artist: menuSong.artist }, chartData);
       menuSong = { ...menuSong, synced, start: start ? Date.now() - (wall() - start) * 1000 : null };
       log(`YARG menu: ${menuSong.artist} - ${menuSong.name}${synced ? ' (synced)' : start ? ' (start not confirmed)' : ''}`);
@@ -818,6 +825,11 @@ export function createYarg({ log, broadcast, getDir, tabs = null }) {
   function info() { return { detected, song, lyrics: song ? lyrics : menuLyrics, menuSong, results, tabs: tabs?.info() ?? null, clock: clockMsg(), file: watchedFile }; }
   return {
     snapshot: info,
+    // the Lanes view's notes for the song shown (the one being played, else the menu music): { song: {name, artist}, lanes }
+    lanes() {
+      const s = song || menuSong;
+      return { song: s ? { name: s.name, artist: s.artist } : null, lanes: (song ? songLanes : menuLanes) || {} };
+    },
     setDir() { watch(); readScores(true); broadcast({ type: 'yarg', yarg: info() }); },
     // A device asks to do something once per play (e.g. load the Live song for this YARG song):
     // the first to ask gets true, the rest false.

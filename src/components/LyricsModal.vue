@@ -1,5 +1,5 @@
 <script setup>
-// Live tab → Lyrics: the YARG lyrics in a modal, without leaving the song list.
+// Sets tab → Lyrics: the YARG lyrics in a modal, without leaving the song list.
 import Modal from './Modal.vue';
 import LyricsPanel from './LyricsPanel.vue';
 import { closeModal } from '../lib/modal.js';

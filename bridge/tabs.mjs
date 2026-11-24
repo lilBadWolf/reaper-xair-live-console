@@ -2,13 +2,18 @@
 //
 //  * Pro parts come with the chart, already in time (see proPart() in yarg.mjs).
 //  * Guitar Pro files (.gp, .gpx, .gp5, .gp4, .gp3) are kept in <data>/tabs/ and matched to the song by
-//    artist and title (or the file name "Artist - Title.gp5"). alphaTab reads them (all GP formats, repeats
+//    artist and title (or the file name "Artist - Title.gp5"). Added by upload, or picked up from the Downloads
+//    folder when a matching file is downloaded (after "Find tab" opened the Ultimate Guitar search). alphaTab reads them (all GP formats, repeats
 //    and alternate endings played out in order). Each played bar of the tab is laid onto a bar of the chart:
 //    a note 3/8 of the way through its tab bar lands 3/8 of the way through the chart bar, so tempo changes
 //    follow the chart. Tabs and charts don't always count bars the same way (a song in 6/8 may be tabbed as
-//    3/4 but charted as 4/4: two tab bars per chart bar), so the ratio is estimated from the bar lengths, and the
-//    ratio + which tab bar goes with the chart's first bar (the offset) are chosen by matching the tab's note
-//    rhythm with the chart's guitar/bass notes.
+//    3/4 but charted as 4/4: two tab bars per chart bar), so the ratio + which tab bar goes with the chart's first
+//    bar (the offset) are chosen by matching the tab's note rhythm with the chart's guitar/bass notes. Every ratio
+//    is tried: the tab's own tempo can't be trusted (a shuffle tabbed in 12/8 at "85" is one 4/4 bar, not 1.5),
+//    and the score counts both the tab notes that land on chart notes and the chart notes the tab leaves bare,
+//    since squeezing a tab onto a busy chart puts notes near chart notes by chance. Tabs don't always start on the
+//    chart's bar lines either (a pickup written as a full bar, a riff tabbed from the wrong beat), so the offset
+//    can be part of a bar when that clearly fits better.
 //  * Then section by section: the tab is cut at its section markers and repeat jumps, and each piece is placed
 //    on its own, in song order, so a repeat the tab doesn't write out (or a section the band skips) only moves
 //    the pieces after it instead of throwing the rest off. Moving a piece costs a few notes' worth of score, so
@@ -24,6 +29,8 @@ import { TAB } from './yarg.mjs';
 export const GP_EXT = /\.(gp|gpx|gp5|gp4|gp3)$/i;
 const MAX_OFFSET = 48;                                  // tab bars either way
 const RATIOS = [1 / 4, 1 / 3, 1 / 2, 2 / 3, 1, 3 / 2, 2, 3, 4]; // chart bars per tab bar
+const STEPS = 12;                                       // offsets within a bar: twelfths (quarters and thirds)
+const NEAR = 0.07;                                      // seconds: a tab note this close to a chart note matches it
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1] : 0; };
 
 // same rules as the page uses to match Live songs: lower case, no accents/brackets/leading "the", letters+digits only
@@ -148,7 +155,7 @@ export function createTabs({ dataDir, log, broadcast }) {
     const near = (t) => {
       let lo = 0, hi = onsets.length - 1;
       while (lo < hi) { const m = (lo + hi) >> 1; if (onsets[m] < t) lo = m + 1; else hi = m; }
-      return Math.min(Math.abs(onsets[lo] - t), lo > 0 ? Math.abs(onsets[lo - 1] - t) : Infinity) < 0.07;
+      return Math.min(Math.abs(onsets[lo] - t), lo > 0 ? Math.abs(onsets[lo - 1] - t) : Infinity) < NEAR;
     };
     // the reference track's note times once, in tab-bar units (bar k + position inside it), sorted
     const units = [...new Set(gp.played.flatMap((p, k) => (ref.bars[p.bar]?.notes || []).map(([tick]) => k + tick / p.len)))].sort((a, b) => a - b);
@@ -168,6 +175,29 @@ export function createTabs({ dataDir, log, broadcast }) {
     };
     const score = (bars, offset, q) => range(bars, offset, q);
     score.range = range;
+    // the whole tab at one offset: hits, misses, notes outside the song, and chart notes no tab note lands on
+    // (all through the song: a tab squeezed into part of it leaves the rest bare)
+    score.full = (bars, offset, q) => {
+      const last = bars.length - 1, times = [];
+      let hits = 0, outside = 0;
+      for (const u of units) {
+        const P = (u + offset) * q, j = Math.floor(P);
+        if (j < 0 || j >= last) { outside++; continue; }
+        const t = bars[j] + (P - j) * (bars[j + 1] - bars[j]);
+        times.push(t);
+        if (near(t)) hits++;
+      }
+      let bare = times.length ? 0 : onsets.length;
+      if (times.length) {
+        let i = 0;
+        for (const c of onsets) {
+          while (i < times.length - 1 && times[i + 1] <= c) i++;
+          if (Math.abs(times[i] - c) >= NEAR && (i + 1 >= times.length || Math.abs(times[i + 1] - c) >= NEAR)) bare++;
+        }
+      }
+      const total = times.length;
+      return { hits, total, outside, bare, value: hits - 0.5 * (total - hits) - 0.5 * outside - 0.5 * bare };
+    };
     score.unitsIn = (from, to) => units.filter((u) => u >= from && u < to).length;
     return score;
   }
@@ -205,7 +235,7 @@ export function createTabs({ dataDir, log, broadcast }) {
 
   // Place each piece (offset, or left out), in order, maximising notes that land on chart notes, minus a cost for
   // every place where consecutive pieces don't follow on directly. Positions are in tab-bar units of the chart.
-  function piecewise(bars, q) {
+  function piecewise(bars, q, phase = 0) {
     const score = scorer();
     if (!score) return null;
     const segs = segments();
@@ -229,9 +259,9 @@ export function createTabs({ dataDir, log, broadcast }) {
         // notes that land on chart notes, minus half a point for each that doesn't (or falls outside the song):
         // otherwise sliding a piece onto silence or past the end costs nothing and chance matches win
         let gain = 0;
-        if (notes) { const r = score.range(bars, o, q, sg.a, sg.b); gain = r.hits - 0.5 * (r.total - r.hits) - 0.5 * r.outside; }
+        if (notes) { const r = score.range(bars, o + phase, q, sg.a, sg.b); gain = r.hits - 0.5 * (r.total - r.hits) - 0.5 * r.outside; }
         if (sg.name) {
-          const P = (sg.a + o) * q, j = Math.floor(P);
+          const P = (sg.a + o + phase) * q, j = Math.floor(P);
           if (j >= 0 && j < bars.length - 1) gain += sectionBonus(sg.name, bars[j] + (P - j) * (bars[j + 1] - bars[j]), bars[j + 1] - bars[j]);
         }
         let cand = startScore + gain, src = { v: -1, o };          // first placed piece: anywhere
@@ -249,8 +279,8 @@ export function createTabs({ dataDir, log, broadcast }) {
     for (let s = segs.length - 1; s >= 0; s--) {
       if (v < 0) { placed[s] = null; continue; } // nothing placed yet at this point: the piece was left out
       const src = back[s].from[v];
-      placed[s] = src.o;
-      if (src.o !== null) for (let k = segs[s].a; k < segs[s].b; k++) offs[k] = src.o;
+      placed[s] = src.o === null ? null : src.o + phase;
+      if (src.o !== null) for (let k = segs[s].a; k < segs[s].b; k++) offs[k] = placed[s];
       v = src.v;
     }
     let hits = 0, total = 0;
@@ -262,21 +292,34 @@ export function createTabs({ dataDir, log, broadcast }) {
       changes: segs.map((sg, s) => ({ name: sg.name || `bar ${sg.a + 1}`, offset: placed[s] })).filter((x, s) => placed[s] === null || placed[s] !== (s ? placed[s - 1] ?? main : main)),
     };
   }
-  // ratio (from bar lengths, then the best-matching nearby ratios) and offset that line the tab up best
+  // ratio and offset that line the tab up best. Every ratio at whole-bar offsets first; then, for the best ratio,
+  // offsets in twelfths of a bar: part of a bar is used only when it clearly beats the best whole bar.
   function bestFit(bars) {
     const score = scorer();
+    // the ratio the tab's own tempo implies: often right, sometimes not (see above), so it's only a mild preference
     const est = median(gp.played.map((p) => p.sec)) / median(bars.slice(1).map((t, i) => t - bars[i]));
-    const qs = RATIOS.filter((q) => Math.abs(Math.log(q / est)) < Math.log(1.4)).sort((a, b) => Math.abs(Math.log(a / est)) - Math.abs(Math.log(b / est)));
-    if (!qs.length) qs.push(1);
-    if (!score) return { offset: 0, q: qs[0], match: null };
-    let best = { offset: 0, q: qs[0], hits: -1, total: 1 };
-    for (const q of qs) {
+    const away = (q) => Math.abs(Math.log2(q / est)); // 1 = twice or half what the tempo says
+    const closest = [...RATIOS].sort((a, b) => away(a) - away(b))[0];
+    if (!score) return { offset: 0, phase: 0, q: closest, match: null };
+    let best = null;
+    for (const q of RATIOS) {
       for (let o = -MAX_OFFSET; o <= MAX_OFFSET; o++) {
-        const r = score(bars, o, q);
-        if (r.hits > best.hits || (r.hits === best.hits && q === best.q && Math.abs(o) < Math.abs(best.offset))) best = { offset: o, q, ...r };
+        const r = score.full(bars, o, q);
+        // a ratio twice/half the tempo's has to win by a tenth of the tab's notes
+        const rank = r.value - 0.1 * (r.total + r.outside) * away(q);
+        if (!best || rank > best.rank + 1e-9 || (Math.abs(rank - best.rank) < 1e-9 && q === best.q && Math.abs(o) < Math.abs(best.offset))) best = { offset: o, q, rank, ...r };
       }
     }
-    return { offset: best.offset, q: best.q, match: best.total ? best.hits / best.total : 0 };
+    const whole = best;
+    for (let i = -MAX_OFFSET * STEPS; i <= MAX_OFFSET * STEPS; i++) {
+      if (i % STEPS === 0) continue;
+      const r = score.full(bars, i / STEPS, whole.q);
+      if (r.value > best.value) best = { offset: i / STEPS, q: whole.q, ...r };
+    }
+    // a fraction of a bar has to win by a margin: shifting a steady riff by a beat matches nearly as well by chance
+    if (best !== whole && best.value - whole.value < Math.max(8, 0.04 * (whole.total + whole.outside))) best = whole;
+    const phase = best.offset - Math.floor(best.offset);
+    return { offset: best.offset, phase, q: best.q, match: best.total ? best.hits / best.total : 0 };
   }
 
   function relayout() {
@@ -287,15 +330,19 @@ export function createTabs({ dataDir, log, broadcast }) {
     const entry = song && index[songKey(song)];
     const fit = bestFit(bars);
     // automatic: section by section (or the single best offset when there are no chart notes to match against)
-    const pw = piecewise(bars, fit.q);
+    const pw = piecewise(bars, fit.q, fit.phase);
     const autoStart = pw ? pw.offs.find((o) => o !== null) ?? fit.offset : fit.offset;
     // a nudge by hand shifts everything, keeping the section adjustments
     const shift = typeof entry?.shift === 'number' ? entry.shift : 0;
     const offset = pw ? pw.offs.map((o) => (o === null ? null : o + shift)) : fit.offset + shift;
     let match = pw ? pw.match : fit.match;
     if (shift) { const sc = scorer(); const r = sc && sc(bars, autoStart + shift, fit.q); match = r ? (r.total ? r.hits / r.total : 0) : null; }
+    // one chart beat in tab bars, for nudging by a beat
+    let n = 0; const per = [];
+    for (const [, k] of chart.beats || []) { if (k === 0 && n) { per.push(n); n = 0; } n++; }
+    const beat = 1 / ((median(per) || 4) * fit.q);
     mapped = {
-      offset: autoStart + shift, auto: shift === 0, autoOffset: autoStart, q: fit.q, match,
+      offset: autoStart + shift, auto: shift === 0, autoOffset: autoStart, q: fit.q, match, beat,
       changes: pw ? pw.changes.map((c) => ({ name: c.name, shift: c.offset === null ? null : c.offset - autoStart })) : [],
       tracks: gp.tracks.map((tr, i) => ({ id: `gp${i}`, name: tr.name, kind: tr.kind, source: 'gp', strings: tr.tuning.length, tuning: tr.tuning, capo: tr.capo, ...layTrack(tr, gp.played, bars, offset, fit.q) })),
     };
@@ -341,6 +388,66 @@ export function createTabs({ dataDir, log, broadcast }) {
   };
   const allTracks = () => [...proTracks(), ...mapped.tracks].map(withTuning);
 
+  // ---------- adding a file ----------
+  async function attach(name, buf) {
+    if (!song) throw new Error('No YARG song is playing to attach the tab to');
+    const ext = (name.match(GP_EXT) || [])[0];
+    if (!ext) throw new Error('Not a Guitar Pro file (.gp, .gpx, .gp5, .gp4, .gp3)');
+    const safe = `${song.artist} - ${song.name}`.replace(/[\/\\:*?"<>|]+/g, '_').slice(0, 120);
+    const file = `${safe}${ext.toLowerCase()}`;
+    // check it reads before keeping it
+    const A = await alphaTab();
+    A.importer.ScoreLoader.loadScoreFromBytes(new Uint8Array(buf), new A.Settings());
+    const old = index[songKey(song)]?.file;
+    if (old && old !== file) fs.rmSync(path.join(dir, old), { force: true });
+    fs.writeFileSync(path.join(dir, file), buf);
+    index[songKey(song)] = { ...index[songKey(song)], file, shift: 0 };
+    saveIndex();
+    await load();
+    return file;
+  }
+
+  // Guitar Pro files that land in the Downloads folder (after "Find tab") are attached to the song YARG is playing
+  // when their title (inside the file, or else in the file name) is the song's. A file with no title in it is taken
+  // only if "Find tab" was used for this song in the last half hour. The download itself is left where it is.
+  let findFor = null;            // { key: songKey, at }
+  const seen = new Map();        // full path -> mtime already looked at
+  async function consider(full) {
+    let st;
+    try { st = fs.statSync(full); } catch { return; }      // renamed away / removed
+    if (!st.isFile() || Date.now() - st.mtimeMs > 10 * 60e3 || seen.get(full) === st.mtimeMs) return;
+    seen.set(full, st.mtimeMs);
+    if (!song) return;
+    const name = path.basename(full), buf = fs.readFileSync(full);
+    let meta;
+    try {
+      const A = await alphaTab();
+      const s = A.importer.ScoreLoader.loadScoreFromBytes(new Uint8Array(buf), new A.Settings());
+      meta = { title: s.title || '', artist: s.artist || '' };
+    } catch (e) { log(`Tabs: downloaded ${name} can't be read: ${e.message}`); return; }
+    const want = norm(song.name);
+    const titled = !!norm(meta.title);
+    const ok = want && (titled ? norm(meta.title) === want || norm(meta.title).includes(want) : norm(name.replace(GP_EXT, '')).includes(want));
+    const found = findFor && findFor.key === songKey(song) && Date.now() - findFor.at < 30 * 60e3;
+    if (!ok && !(found && !titled)) {
+      log(`Tabs: downloaded ${name} (“${meta.title || '?'}” by ${meta.artist || '?'}) isn't ${song.artist} - ${song.name}: left alone`);
+      return;
+    }
+    try { log(`Tabs: attached downloaded ${name} as ${await attach(name, buf)}`); } catch (e) { log(`Tabs: couldn't attach ${name}: ${e.message}`); }
+  }
+  function watchDownloads(folder) {
+    const timers = new Map();
+    try {
+      const w = fs.watch(folder, (ev, f) => {
+        if (!f || !GP_EXT.test(f)) return;  // browsers download to .crdownload/.download/.part and rename at the end
+        clearTimeout(timers.get(f));
+        timers.set(f, setTimeout(() => { timers.delete(f); consider(path.join(folder, f)); }, 1500));
+      });
+      w.on('error', (e) => log(`Tabs: stopped watching ${folder}: ${e.message}`));
+      log(`Tabs: watching ${folder} for Guitar Pro downloads`);
+    } catch (e) { log(`Tabs: can't watch ${folder} for downloads: ${e.message}`); }
+  }
+
   function info() {
     return {
       version,
@@ -348,6 +455,7 @@ export function createTabs({ dataDir, log, broadcast }) {
       file: gp?.file || null,
       error: gpError,
       offset: mapped.offset, auto: mapped.auto, autoOffset: mapped.autoOffset ?? 0, playedBars: gp?.played.length || 0,
+      beat: mapped.beat ?? 0.25,                          // one chart beat, in tab bars (the offset's unit)
       ratio: mapped.q ?? 1, match: mapped.match ?? null, // chart bars per tab bar; share of tab note times that land on chart notes
       changes: mapped.changes || [],                      // tab sections moved from where they'd follow on: { name, shift (tab bars) | null = left out }
       tracks: allTracks().map(({ notes, chords, ...t }) => ({ ...t, count: notes.length })),
@@ -367,28 +475,22 @@ export function createTabs({ dataDir, log, broadcast }) {
       const t = allTracks().find((x) => x.id === id);
       return t ? { ...t, version } : null;
     },
-    async upload(name, buf) {
-      if (!song) throw new Error('No YARG song is playing to attach the tab to');
-      const ext = (name.match(GP_EXT) || [])[0];
-      if (!ext) throw new Error('Not a Guitar Pro file (.gp, .gpx, .gp5, .gp4, .gp3)');
-      const safe = `${song.artist} - ${song.name}`.replace(/[\/\\:*?"<>|]+/g, '_').slice(0, 120);
-      const file = `${safe}${ext.toLowerCase()}`;
-      // check it reads before keeping it
-      const A = await alphaTab();
-      A.importer.ScoreLoader.loadScoreFromBytes(new Uint8Array(buf), new A.Settings());
-      const old = index[songKey(song)]?.file;
-      if (old && old !== file) fs.rmSync(path.join(dir, old), { force: true });
-      fs.writeFileSync(path.join(dir, file), buf);
-      index[songKey(song)] = { ...index[songKey(song)], file, shift: 0 };
-      saveIndex();
-      await load();
-      return file;
+    upload: attach,
+    // "Find tab": the Ultimate Guitar search for this song (Guitar Pro files only), to open in the Mac's browser.
+    // Remembered for a while so a download with no title in it can still be matched to the song (see consider()).
+    find() {
+      if (!song) return null;
+      findFor = { key: songKey(song), at: Date.now() };
+      const q = `${song.artist || ''} ${song.name}`.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim();
+      return `https://www.ultimate-guitar.com/search.php?search_type=title&value=${encodeURIComponent(q)}&type=500`;
     },
+    watchDownloads,
     setOffset(offset) {
       if (!song || !gp) return false;
       const key = songKey(song);
       // stored as a shift from the automatic placement, so nudging keeps the section-by-section adjustments
-      const shift = typeof offset === 'number' ? Math.max(-MAX_OFFSET * 2, Math.min(MAX_OFFSET * 2, Math.round(offset) - (mapped.autoOffset ?? 0))) : 0;
+      // (whole bars or beats: fractions of a tab bar)
+      const shift = typeof offset === 'number' ? Math.max(-MAX_OFFSET * 2, Math.min(MAX_OFFSET * 2, Math.round((offset - (mapped.autoOffset ?? 0)) * 96) / 96)) : 0;
       index[key] = { ...index[key], file: gp.file, shift };
       saveIndex();
       relayout();

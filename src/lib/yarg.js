@@ -11,6 +11,7 @@ export const yarg = reactive({
                     //   sections: [{ t, name }], beats: [[t, k]] (k 0 = bar line, 1 = beat) } | { error }
   menuSong: null,   // what YARG is playing in its menus: { name, artist, album, year }
   results: null,    // { last, best } from YARG's scores: { song, artist, score, stars, players: [...] }
+  local: false,     // this page is open on the REAPER computer (the bridge says so): Guitar Pro buttons
   auto: false,      // load the matching Live song (shared by every device, kept by the bridge)
   tabs: null,       // { version, song, file, error, offset, auto, autoOffset, playedBars, tracks: [{ id, name, kind, source, strings, tuning, count }] }
   clock: { state: 'off', t: 0, rate: 1, stream: false, scene: 'unknown', bpm: 0, paused: false, play: 0 },
@@ -26,6 +27,7 @@ function setClock(c) {
 export function onYargMessage(msg) {
   if (msg.type === 'yarg' || (msg.type === 'snapshot' && msg.yarg)) {
     const y = msg.yarg;
+    if (msg.type === 'snapshot') yarg.local = !!msg.local;
     yarg.detected = !!y.detected;
     yarg.song = y.song;
     yarg.lyrics = y.lyrics;
@@ -125,6 +127,16 @@ export function matchLiveSection(yName, sections) {
   return best;
 }
 
+// ---------- lanes ----------
+// Every five-fret/drum part of the song shown, from the bridge (bridge/lanes.mjs). Fetched when the song changes.
+export const LANE = { HOPO: 1, TAP: 2, CYMBAL: 4, KICK2: 8, STAR: 16 };
+export async function fetchLanes() {
+  const r = await fetch(`${bridgeBase()}/yarg/lanes`);
+  if (r.status === 404) throw Object.assign(new Error('The bridge is out of date: restart it (see the README) to see the lanes.'), { old: true });
+  if (!r.ok) throw new Error(`lanes: ${r.status}`);
+  return r.json(); // { song: {name, artist} | null, lanes: { guitar|rhythm|bass|drums|keys: { name, kind, pads, notes, star, solo } } }
+}
+
 // ---------- tabs ----------
 const trackCache = new Map(); // `${id}@${version}` -> track
 export async function fetchTabTrack(id) {
@@ -141,6 +153,13 @@ export async function uploadTab(file) {
   const r = await fetch(`${bridgeBase()}/yarg/tab/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } });
   const j = await r.json().catch(() => ({ error: `upload failed (${r.status})` }));
   if (!r.ok) throw new Error(j.error || 'upload failed');
+  return j;
+}
+// open the Ultimate Guitar search for this song in the REAPER computer's browser; a matching download is attached by itself
+export async function findTab() {
+  const r = await fetch(`${bridgeBase()}/yarg/tab/find`, { method: 'POST' });
+  const j = await r.json().catch(() => ({ error: `failed (${r.status})` }));
+  if (!r.ok) throw new Error(j.error || 'failed');
   return j;
 }
 export const setTabOffset = (offset) => post('/yarg/tab/offset', { offset });

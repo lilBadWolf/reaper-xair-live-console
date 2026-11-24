@@ -22,7 +22,7 @@ async function onFile(e) {
 </script>
 
 <template>
-  <Modal title="Setlists" subtitle="Live" width="560px" @close="closeModal">
+  <Modal title="Setlists" subtitle="Sets" width="560px" @close="closeModal">
     <template #actions>
       <button class="primary" @click="newSetlist">+ New</button>
     </template>

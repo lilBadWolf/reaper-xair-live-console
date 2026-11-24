@@ -19,6 +19,8 @@ const defaults = {
   tabTrack: '',                  // YARG tab: track id last picked on this device
   tabKind: 'guitar',             // YARG tab: guitar | bass (used when that track id isn't in the next song)
   tabScale: 1,                   // YARG tab: size on this device
+  lanesSpeed: 1,                 // YARG lanes: note speed on this device (1 = 1.6 s from the far end to the strike line)
+  lanesHidden: [],               // YARG lanes: parts not shown on this device (guitar | rhythm | bass | drums | keys)
 };
 
 let saved = {};

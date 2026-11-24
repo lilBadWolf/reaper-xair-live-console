@@ -16,6 +16,16 @@ function toggleHidden(name) {
   const i = settings.hiddenTracks.indexOf(name);
   if (i >= 0) settings.hiddenTracks.splice(i, 1); else settings.hiddenTracks.push(name);
 }
+// Restart the bridge (this Mac only): it starts a fresh copy of itself; pages reconnect by themselves
+const restartMsg = ref('');
+async function restartBridge() {
+  restartMsg.value = 'Restarting…';
+  try {
+    const r = await fetch(`${bridgeBase()}/restart`, { method: 'POST' });
+    restartMsg.value = r.ok ? 'Restarted: reconnecting…' : r.status === 404 ? 'This bridge is too old to restart itself: quit it and run live_console.lua again (once)' : `Failed (${r.status})`;
+  } catch { restartMsg.value = 'Bridge unreachable'; }
+  setTimeout(() => { restartMsg.value = ''; }, 6000);
+}
 const fmtVal = (e) => (e.t === 'f' ? e.v.toFixed(4) : JSON.stringify(e.v));
 const ago = (t) => `${Math.max(0, Math.round((Date.now() - t) / 1000))}s ago`;
 </script>
@@ -40,6 +50,9 @@ const ago = (t) => `${Math.max(0, Math.round((Date.now() - t) / 1000))}s ago`;
       </label>
       <label>Bridge URL <span class="hint">blank = this host, port 8899</span>
         <div class="inline"><input v-model.lazy="settings.bridgeUrl" placeholder="http://host:8899" /><button @click="startXr()">Reconnect</button></div>
+      </label>
+      <label v-if="yarg.local">Restart the bridge <span class="hint">{{ restartMsg || 'after an update, or if the mixer stops answering (the mixer drops out for a moment)' }}</span>
+        <div class="inline"><button @click="restartBridge">Restart bridge</button></div>
       </label>
     </section>
 
