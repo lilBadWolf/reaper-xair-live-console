@@ -93,6 +93,8 @@ Reload the page on your devices. The bridge restarts by itself when its code cha
 
 If the band also plays [YARG](https://yarg.in) (Rock Band style, on the REAPER computer), a **YARG** tab appears while it's running.
 
+Just want the YARG dashboard, without REAPER or a mixer? [**yargDash**](https://github.com/lilBadWolf/yargDash) is the same YARG features as a standalone app that runs next to YARG.
+
 **Setup**
 - In YARG: *Settings → All Settings → Experimental → **Enable UDP Data Stream*** (once). Without it you still get the song and its lyrics, but nothing follows the song.
 - **On a Mac, start YARG with `npm run yarg`** (or double-click `yarg/Start YARG.command`) instead of the YARC Launcher. YARG broadcasts its data stream without the socket permission macOS requires (Windows doesn't check), so macOS blocks it. The launcher loads a tiny library into YARG that adds that permission (`yarg/broadcast-fix.c`; YARG's files aren't changed). It needs Apple's command line tools (`xcode-select --install`) the first time.
