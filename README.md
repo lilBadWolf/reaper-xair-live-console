@@ -122,9 +122,13 @@ Just want the YARG dashboard, without REAPER or a mixer? [**yargDash**](https://
 
 **Performer pages** (QR button on the YARG tab): `#yarg/stage` lyrics, `#yarg/stage/harm2` a harmony part, `#yarg/tab/<track>` a tab, `#yarg/click` the click, `#yarg/lanes` the lanes (audience screen). Hold the logo for 1 s to get back to the full app.
 
-| Lyrics with pitch guide | Tab |
+| Lyrics with pitch guide | Tab, lined up with the song |
 |---|---|
 | ![YARG lyrics](docs/screenshots/yarg-lyrics.png) | ![YARG tab](docs/screenshots/yarg-tab.png) |
+| **Lanes** (audience screen) | **Click** for the drummer |
+| ![YARG lanes](docs/screenshots/yarg-lanes.png) | ![YARG click](docs/screenshots/yarg-click.png) |
+
+<img src="docs/screenshots/yarg-phone-tab.png" alt="YARG tab performer page on a phone in landscape" width="520">
 
 ## How it works
 
