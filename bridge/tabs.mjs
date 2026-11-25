@@ -435,10 +435,12 @@ export function createTabs({ dataDir, log, broadcast }) {
     }
     try { log(`Tabs: attached downloaded ${name} as ${await attach(name, buf)}`); } catch (e) { log(`Tabs: couldn't attach ${name}: ${e.message}`); }
   }
+  // returns a function that stops watching
   function watchDownloads(folder) {
     const timers = new Map();
+    let w = null;
     try {
-      const w = fs.watch(folder, (ev, f) => {
+      w = fs.watch(folder, (ev, f) => {
         if (!f || !GP_EXT.test(f)) return;  // browsers download to .crdownload/.download/.part and rename at the end
         clearTimeout(timers.get(f));
         timers.set(f, setTimeout(() => { timers.delete(f); consider(path.join(folder, f)); }, 1500));
@@ -446,6 +448,7 @@ export function createTabs({ dataDir, log, broadcast }) {
       w.on('error', (e) => log(`Tabs: stopped watching ${folder}: ${e.message}`));
       log(`Tabs: watching ${folder} for Guitar Pro downloads`);
     } catch (e) { log(`Tabs: can't watch ${folder} for downloads: ${e.message}`); }
+    return () => { try { w?.close(); } catch {} for (const t of timers.values()) clearTimeout(t); timers.clear(); };
   }
 
   function info() {

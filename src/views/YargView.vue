@@ -135,6 +135,7 @@ function share() {
       <div class="np">
         <div class="lbl">
           <span class="st" :class="status.cls">{{ status.text }}</span>
+          <span v-if="yarg.via === 'yargDash'" class="via" title="Live Console gets YARG through yargDash, running on this computer">via yargDash</span>
           <span v-if="bpm" class="bpm"><i :key="yarg.beat.n" class="beat" :class="{ bar: yarg.beat.k === 0 }" />{{ bpm }} BPM</span>
           <span v-if="best && yarg.song" class="best" :title="`${best.plays} play${best.plays === 1 ? '' : 's'}`">Best <span class="stars">{{ stars(best.stars) }}</span> {{ fmtScore(best.score) }}</span>
         </div>
@@ -297,6 +298,7 @@ function share() {
 .np { flex: 1; min-width: 0; padding: 12px 16px; border-radius: 16px; background: linear-gradient(135deg, #2a1f3a, #14171c 70%); border: 1px solid #3d2f55; }
 .lbl { display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
 .st { padding: 2px 7px; border-radius: 6px; background: #ffffff10; }
+.via { padding: 2px 7px; border-radius: 6px; background: #2a1f3a; color: #cdb3ff; letter-spacing: .06em; }
 .st.ok { background: #10291c; color: var(--ok); }
 .st.warn { background: #33280c; color: var(--solo); }
 .bpm { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }

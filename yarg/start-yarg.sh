@@ -47,5 +47,8 @@ if pgrep -x YARG >/dev/null 2>&1; then
   echo "YARG is running. Quit it first (the fix only applies when YARG starts), then run this again."; exit 1
 fi
 echo "Starting $APP"
-DYLD_INSERT_LIBRARIES="$LIB" nohup "$APP/Contents/MacOS/YARG" >/dev/null 2>&1 &
+# Through `open` (Launch Services), with the library passed by --env: macOS wipes DYLD_* variables when it starts a
+# system program (nohup, env), so YARG would start without the library; and this way YARG runs as itself, with its
+# own Local Network permission, whatever started this script.
+open -a "$APP" --env "DYLD_INSERT_LIBRARIES=$LIB"
 echo "Done. In YARG, make sure Settings > All Settings > Experimental > Enable UDP Data Stream is on."

@@ -29,6 +29,11 @@
 //   POST /yarg/tab/tuning {track, tuning:[midi…]|null}  set a track's tuning for this song (null = as the chart/file says)
 //   GET  /yarg/lanes                                    the Lanes view's notes: every guitar/bass/drums/keys part of the song shown
 //   POST /yarg/tab/find                                 open the Ultimate Guitar search for the song in this computer's browser (this computer only)
+//
+// YARG through yargDash: when yargDash runs on this computer, the bridge stops following YARG itself and relays
+// yargDash's YARG data instead (/yarg/* requests are passed on to it; see yargdash.mjs). The yarg snapshot says
+// which: {via:'yargDash'} or {via:null}. Setting {yargDashUrl:'http://host:port'} (or LIVE_CONSOLE_YARGDASH) if
+// yargDash doesn't use port 8900.
 //   POST /live/doc        {songs, setlists, currentSetlistId}   LIVE tab song library + setlists (live-songs.json)
 //   POST /live/active     {songId, sectionId}           what's loaded now (shown on every device)
 //   POST /quit                                          exit (localhost only; a new bridge replacing one that lost the mixer)
@@ -44,6 +49,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createYarg } from './yarg.mjs';
 import { createTabs } from './tabs.mjs';
+import { createYargDashLink } from './yargdash.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const XR_PORT = 10024;
@@ -321,7 +327,7 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.write(`data: ${JSON.stringify({ type: 'snapshot', mixer, values: state, learned, live, lan: lanIps(), local: isLocal(req), yarg: { ...yarg.snapshot(), auto: config.yargAuto } })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'snapshot', mixer, values: state, learned, live, lan: lanIps(), local: isLocal(req), yarg: { ...yargSnapshot(), auto: config.yargAuto } })}\n\n`);
     clients.add(res);
     if (clients.size === 1) send('/meters', [{ t: 's', v: '/meters/1' }]);
     const ka = setInterval(() => res.write(': ka\n\n'), 15000);
@@ -372,7 +378,12 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/yarg/claim') {
     const body = await readBody(req);
-    return res.end(yarg.claim(body.key) ? 'ok' : 'taken');
+    return res.end(claimPlay(body.key) ? 'ok' : 'taken');
+  }
+  // yargDash running: it has the song, the lanes and the tabs; pass the request on
+  if (yargDash.up() && (url.pathname === '/yarg/lanes' || url.pathname.startsWith('/yarg/tab/') || url.pathname === '/yarg/menusync')) {
+    if (url.pathname === '/yarg/tab/find' && !isLocal(req)) { res.statusCode = 403; res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({ error: 'Only from the REAPER computer' })); }
+    return yargDash.forward(req, res, url.pathname + url.search);
   }
   if (url.pathname === '/yarg/lanes') {
     res.setHeader('Content-Type', 'application/json');
@@ -414,7 +425,7 @@ const server = http.createServer(async (req, res) => {
     if (typeof body.yargDir === 'string') {
       config.yargDir = body.yargDir.trim();
       saveConfig();
-      yarg.setDir();
+      yarg?.setDir();
     }
     if (typeof body.yargAuto === 'boolean') {
       config.yargAuto = body.yargAuto;
@@ -440,9 +451,39 @@ const server = http.createServer(async (req, res) => {
 });
 
 // ---------- YARG ----------
-const tabs = createTabs({ dataDir: DATA_DIR, log, broadcast });
-const yarg = createYarg({ log, broadcast, getDir: () => config.yargDir, tabs });
-tabs.watchDownloads(path.join(os.homedir(), 'Downloads'));
+// Followed directly (yarg.mjs: song, clock, scores; tabs.mjs: tabs and the Downloads watcher), or, while yargDash
+// runs on this computer, through yargDash (yargdash.mjs): then our own watcher is stopped so there's one of each.
+let yarg = null, tabs = null, stopDownloads = null;
+function startLocalYarg() {
+  if (yarg) return;
+  tabs = createTabs({ dataDir: DATA_DIR, log, broadcast });
+  yarg = createYarg({ log, broadcast, getDir: () => config.yargDir, tabs });
+  stopDownloads = tabs.watchDownloads(path.join(os.homedir(), 'Downloads'));
+}
+function stopLocalYarg() {
+  if (!yarg) return;
+  yarg.close(); stopDownloads?.();
+  yarg = null; tabs = null; stopDownloads = null;
+}
+const yargDash = createYargDashLink({
+  log,
+  url: () => process.env.LIVE_CONSOLE_YARGDASH || config.yargDashUrl,
+  onUp: () => { stopLocalYarg(); remoteClaims.clear(); broadcast({ type: 'yarg', yarg: yargSnapshot() }); },
+  onDown: () => { startLocalYarg(); broadcast({ type: 'yarg', yarg: yargSnapshot() }); },
+  onMessage: (m) => broadcast(m.type === 'yarg' ? { ...m, yarg: { ...m.yarg, via: 'yargDash' } } : m),
+});
+startLocalYarg();
+const yargSnapshot = () => (yargDash.up() ? { ...yargDash.snapshot(), via: 'yargDash' } : { ...yarg.snapshot(), via: null });
+
+// "Once per play" claims (auto-loading the Live song): through yargDash, kept here against yargDash's play count
+const remoteClaims = new Set();
+function claimPlay(key) {
+  if (!yargDash.up()) return yarg.claim(key);
+  const play = yargDash.snapshot()?.clock?.play ?? 0;
+  if (typeof key !== 'string' || !key.startsWith(`${play}:`) || remoteClaims.has(key)) return false;
+  remoteClaims.add(key);
+  return true;
+}
 
 // Restart: start a copy of ourselves (same arguments) and exit; it waits for us to be gone (--after). The copy is
 // our child, so macOS still counts it as launched by whatever launched us (REAPER): the Local Network permission

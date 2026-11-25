@@ -38,7 +38,7 @@ const ago = (t) => `${Math.max(0, Math.round((Date.now() - t) / 1000))}s ago`;
         <dt>REAPER web API</dt><dd :class="reaper.connected ? 'ok' : 'bad'">{{ reaper.connected ? 'Connected' : 'Offline' }}</dd>
         <dt>live_console.lua</dt><dd :class="reaper.scriptAlive ? 'ok' : 'bad'">{{ reaper.scriptAlive ? 'Running' : 'Not running' }}</dd>
         <dt>XR18 bridge</dt><dd :class="xr.bridge ? 'ok' : 'bad'">{{ xr.bridge ? bridgeBase() : 'Unreachable' }}</dd>
-        <dt>YARG</dt><dd :class="yarg.detected ? 'ok' : 'bad'">{{ !yarg.detected ? 'Not running' : yarg.clock.stream ? 'Running · data stream on' : 'Running · data stream off' }}</dd>
+        <dt>YARG</dt><dd :class="yarg.detected ? 'ok' : 'bad'">{{ !yarg.detected ? 'Not running' : yarg.clock.stream ? 'Running · data stream on' : 'Running · data stream off' }}{{ yarg.via === 'yargDash' ? ' · via yargDash' : '' }}</dd>
         <dt>XR18</dt><dd :class="xr.mixer.connected ? 'ok' : 'bad'">{{ xr.mixer.connected ? `${xr.mixer.name} (${xr.mixer.model} ${xr.mixer.firmware}) @ ${xr.mixer.host}` : 'Not found' }}</dd>
       </dl>
     </section>
@@ -74,12 +74,14 @@ const ago = (t) => `${Math.max(0, Math.round((Date.now() - t) / 1000))}s ago`;
 
     <section>
       <h3>YARG</h3>
-      <p class="hint">The YARG tab shows the song YARG is playing, its lyrics (with harmonies and a pitch guide), a click for the drummer, and scores. For everything to follow the song, turn on YARG's <b>Settings → All Settings → Experimental → Enable UDP Data Stream</b>. On a Mac, also start YARG with <code>npm run yarg</code> (or double-click <code>yarg/Start YARG.command</code>): macOS blocks YARG's stream otherwise.</p>
+      <p class="hint">The YARG tab shows the song YARG is playing, its lyrics (with harmonies and a pitch guide), a click for the drummer, and scores. For everything to follow the song, turn on YARG's <b>Settings → All Settings → Experimental → Enable UDP Data Stream</b>. If a Mac blocks YARG's stream (YARG logs “Error sending UDP packet”), start YARG with <code>npm run yarg</code> (or double-click <code>yarg/Start YARG.command</code>) instead.</p>
+      <p v-if="yarg.via === 'yargDash'" class="hint ok-note">yargDash is running on this computer, so Live Console gets YARG through it: the same song, lyrics, lanes and tabs as yargDash (tabs are added and kept in yargDash). When yargDash quits, Live Console follows YARG itself again.</p>
+      <p v-else class="hint">Running <a href="https://github.com/lilBadWolf/yargDash" target="_blank" rel="noopener">yargDash</a> too? Live Console finds it on this computer and gets YARG through it.</p>
       <label class="check"><input type="checkbox" :checked="yarg.auto" @change="setAuto($event.target.checked)" /> Auto-load Live songs <span class="hint">when YARG starts a song, load the Live song with the same name and switch its sections with YARG's (all devices)</span></label>
       <label>Lyrics timing on this device <span class="hint">ms · + shows lyrics earlier, − later</span>
         <input v-model.number="settings.lyricsOffsetMs" type="number" step="50" />
       </label>
-      <label>YARG data folder <span class="hint">blank = automatic · the folder with currentSong.json</span>
+      <label v-if="yarg.via !== 'yargDash'">YARG data folder <span class="hint">blank = automatic · the folder with currentSong.json</span>
         <div class="inline"><input v-model="yargDir" placeholder="(automatic)" /><button @click="post('/config', { yargDir })">Apply</button></div>
       </label>
     </section>
@@ -127,6 +129,7 @@ dt { color: var(--muted); }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 label.check { flex-direction: row; align-items: center; gap: 8px; }
 .hint { color: var(--muted); font-size: 12px; margin: 0; }
+.hint.ok-note { color: #cdb3ff; }
 select { background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 6px 8px; font: inherit; width: 100%; }
 input:not([type=checkbox]) { background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 9px 10px; font: inherit; min-width: 0; }
 .inline { display: flex; gap: 6px; } .inline input { flex: 1; }

@@ -786,8 +786,9 @@ export function createYarg({ log, broadcast, getDir, tabs = null }) {
   // ---------- scores (YARG's scores/scores.db, written when a song ends) ----------
   let sqlite = null, scoresFile = null;
   import('node:sqlite').then((m) => { sqlite = m; readScores(true); }).catch(() => log('YARG scores: needs Node 22.13+ (node:sqlite); skipped'));
+  let closed = false;
   function readScores(announce) {
-    if (!sqlite || !watchedFile) return;
+    if (closed || !sqlite || !watchedFile) return;
     const f = path.join(path.dirname(watchedFile), 'scores', 'scores.db');
     if (f !== scoresFile) { if (scoresFile) fs.unwatchFile(scoresFile); scoresFile = f; fs.watchFile(f, { interval: 1500 }, () => readScores(true)); }
     if (!fs.existsSync(f)) return;
@@ -848,6 +849,7 @@ export function createYarg({ log, broadcast, getDir, tabs = null }) {
       return true;
     },
     close() {
+      closed = true;
       clearInterval(liveTimer); clearInterval(rescan); clearInterval(procTimer); clearInterval(menuTimer); clearInterval(logTimer); logWatcher?.close();
       if (watchedFile) fs.unwatchFile(watchedFile);
       if (scoresFile) fs.unwatchFile(scoresFile);
