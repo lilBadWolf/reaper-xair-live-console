@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { settings, resetSettings, bridgeBase } from '../lib/settings.js';
 import { reaper } from '../lib/reaper.js';
 import { xr, startXr, setMixerHost, post } from '../lib/xr18.js';
@@ -26,6 +26,12 @@ async function restartBridge() {
   } catch { restartMsg.value = 'Bridge unreachable'; }
   setTimeout(() => { restartMsg.value = ''; }, 6000);
 }
+// the tab library in use (yargDash's while it's running) and the data folder, for backing them up
+const dirs = ref({ tabsDir: '', dataDir: '', via: null });
+const loadDirs = async () => { try { dirs.value = await (await fetch(`${bridgeBase()}/folders`)).json(); } catch {} };
+onMounted(loadDirs);
+watch(() => yarg.via, loadDirs); // yargDash started or quit: its folder or ours
+const openFolder = (which) => post('/folder/open', { which });
 const fmtVal = (e) => (e.t === 'f' ? e.v.toFixed(4) : JSON.stringify(e.v));
 const ago = (t) => `${Math.max(0, Math.round((Date.now() - t) / 1000))}s ago`;
 </script>
@@ -81,6 +87,15 @@ const ago = (t) => `${Math.max(0, Math.round((Date.now() - t) / 1000))}s ago`;
       <label>Lyrics timing on this device <span class="hint">ms · + shows lyrics earlier, − later</span>
         <input v-model.number="settings.lyricsOffsetMs" type="number" step="50" />
       </label>
+      <div class="tablib">
+        <b>Tab library</b>
+        <p class="hint">Guitar Pro files, and each song's bar offset and tunings (<code>index.json</code>). <template v-if="dirs.via === 'yargDash'">yargDash is running, so these are yargDash's. </template>To back them up, copy the folder (or zip it); to restore them, copy its contents back while {{ dirs.via === 'yargDash' ? 'yargDash' : 'the bridge' }} isn't running.</p>
+        <code class="path" :title="dirs.tabsDir">{{ dirs.tabsDir ? `\u200e${dirs.tabsDir}\u200e` : '…' }}</code>
+        <div v-if="yarg.local" class="inline">
+          <button @click="loadDirs(); openFolder('tabs')">Open tab folder</button>
+          <button @click="loadDirs(); openFolder('data')">Open data folder</button>
+        </div>
+      </div>
       <label v-if="yarg.via !== 'yargDash'">YARG data folder <span class="hint">blank = automatic · the folder with currentSong.json</span>
         <div class="inline"><input v-model="yargDir" placeholder="(automatic)" /><button @click="post('/config', { yargDir })">Apply</button></div>
       </label>
@@ -118,6 +133,9 @@ const ago = (t) => `${Math.max(0, Math.round((Date.now() - t) / 1000))}s ago`;
 </template>
 
 <style scoped>
+.tablib { display: flex; flex-direction: column; gap: 6px; }
+.tablib .hint { margin: 0; }
+.tablib .path { display: block; padding: 7px 10px; border-radius: 8px; background: #0b0d10; border: 1px solid var(--line); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .settings { height: 100%; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; align-content: start; }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
 section.wide { grid-column: 1 / -1; }

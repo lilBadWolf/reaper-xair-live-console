@@ -66,6 +66,8 @@ const showStreamHint = computed(() => yarg.song && !yarg.clock.stream && !stage.
 // ---------- Live songs ----------
 const matched = computed(() => liveMatch());
 const loadedHere = computed(() => matched.value && live.active.songId === matched.value.id);
+// the song's section (part) loaded right now, if one is: shown next to the song
+const activePart = computed(() => (loadedHere.value && live.active.sectionId ? matched.value.sections?.find((s) => s.id === live.active.sectionId) || null : null));
 const autoProblem = computed(() => (!yarg.auto ? '' : !reaper.scriptAlive ? 'FX script not running' : ''));
 
 // ---------- scores ----------
@@ -251,7 +253,7 @@ function share() {
       </template>
       <div v-if="!stage" class="auto">
         <span v-if="yarg.song && matched" class="match" :class="{ ok: loadedHere }">
-          Live song: <b>{{ matched.name }}</b><template v-if="loadedHere"> ✓</template>
+          Live song: <b>{{ matched.name }}</b><template v-if="loadedHere"> ✓</template><template v-if="activePart"> · <b class="part">{{ activePart.name }}</b></template>
         </span>
         <span v-else-if="yarg.song && yarg.auto" class="match warn">No Live song named “{{ yarg.song.name }}”</span>
         <span v-if="autoProblem" class="match warn">{{ autoProblem }}</span>
@@ -378,9 +380,10 @@ function share() {
 .offset .autob.on { color: var(--accent); border-color: var(--accent); }
 .empty .small { font-size: 13px; max-width: 460px; margin: 0; }
 .auto { margin-left: auto; display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
-.match { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+.match { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 400px; }
 .match b { color: var(--text); }
 .match.ok b { color: var(--ok); }
+.match b.part { color: var(--accent); }
 .match.warn { color: var(--solo); }
 
 .follow { margin-top: 6px; font-size: 12px; color: var(--muted); }

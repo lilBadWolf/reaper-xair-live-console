@@ -114,16 +114,26 @@ export function matchLiveSong(ySong, songs, setlistSongs) {
   return setlistSongs.find(hit) || songs.find(hit) || null;
 }
 
-// The Live section for a YARG section name: "Verse 2a" → "Verse", "Pre-Chorus 1" → "Pre", "Gtr solo" → "Solo".
-// No match → null (the song's base sound: sections are changes on top of it).
+// The Live section for a YARG section name: the most specific one there is. YARG's name is tried in full, then
+// with its last part dropped, and so on: "Chorus 3" → "Chorus 3", else "Chorus"; "Verse 2a" → "Verse 2a", else
+// "Verse 2", else "Verse"; "Verse G" → "Verse G", else "Verse". So a "Chorus" section covers every chorus, and a
+// "Chorus 3" one, if the song has it, takes over the third. None of those → the loose match: "Pre-Chorus 1" → "Pre",
+// "Gtr solo" → "Solo". No match → null (the song's base sound: sections are changes on top of it).
 export function matchLiveSection(yName, sections) {
+  const named = sections.map((s) => [norm(s.name), s]).filter(([x]) => x);
+  // YARG's name in parts (words, and numbers apart from letters: "Verse 2a" → verse, 2, a), most specific first
+  const parts = String(yName || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/&/g, ' and ')
+    .split(/[^a-z0-9]+/).flatMap((w) => w.match(/[a-z]+|[0-9]+/g) || []);
+  for (let k = parts.length; k > 0; k--) {
+    const key = parts.slice(0, k).join('');
+    const hit = named.find(([x]) => x === key);
+    if (hit) return hit[1];
+  }
   const y = norm(String(yName || '').replace(/\d+[a-z]?\b/gi, ''));
   if (!y) return null;
   let best = null, score = 0;
-  for (const s of sections) {
-    const x = norm(s.name);
-    if (!x) continue;
-    const sc = x === y ? 1000 : y.startsWith(x) ? 100 + x.length : y.includes(x) ? x.length : 0;
+  for (const [x, s] of named) {
+    const sc = y.startsWith(x) ? 100 + x.length : y.includes(x) ? x.length : 0;
     if (sc > score) { score = sc; best = s; }
   }
   return best;

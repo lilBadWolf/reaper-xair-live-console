@@ -1,5 +1,6 @@
 // Auto-load: when YARG starts a song, load the Live song with the same name, then switch its sections as
-// YARG reaches them ("Verse 2" → the song's "Verse" section; a YARG section with no match → the base sound).
+// YARG reaches them (the most specific match: "Chorus 3" → the song's "Chorus 3" section, else its "Chorus";
+// a YARG section with no match → the song's main sound). See matchLiveSection() in yarg.js.
 // Runs on every open device; the bridge hands each step to one device only (claim), so presets load once.
 import { watch } from 'vue';
 import { yarg, claim, songTime, sectionIndexAt, matchLiveSong, matchLiveSection } from './yarg.js';

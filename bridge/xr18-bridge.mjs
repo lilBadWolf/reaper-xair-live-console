@@ -38,6 +38,8 @@
 //   POST /live/active     {songId, sectionId}           what's loaded now (shown on every device)
 //   POST /quit                                          exit (localhost only; a new bridge replacing one that lost the mixer)
 //   POST /restart                                       start a fresh copy of the bridge and exit (this computer only)
+//   GET  /folders                                       {tabsDir, dataDir, via}: the tab library in use (yargDash's while it runs)
+//   POST /folder/open     {which:'tabs'|'data'}             show it in Finder/Explorer (this computer only)
 
 import dgram from 'node:dgram';
 import http from 'node:http';
@@ -434,6 +436,17 @@ const server = http.createServer(async (req, res) => {
     }
     return res.end('ok');
   }
+  // The tab library in use (yargDash's while it's running: tabs are kept there then) and the data folder.
+  if (url.pathname === '/folders') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify(await folders())); }
+  if (req.method === 'POST' && url.pathname === '/folder/open') {
+    if (!isLocal(req)) { res.statusCode = 403; return res.end('only from the REAPER computer'); }
+    const body = await readBody(req), f = await folders();
+    const dir = body.which === 'data' ? f.dataDir : f.tabsDir;
+    if (!f.via) fs.mkdirSync(dir, { recursive: true });
+    const [cmd, args] = process.platform === 'darwin' ? ['open', [dir]] : process.platform === 'win32' ? ['explorer', [dir]] : ['xdg-open', [dir]];
+    execFile(cmd, args, (e) => { if (e) log('Could not open the folder:', e.message); });
+    return res.end('ok');
+  }
   if (req.method === 'POST' && url.pathname === '/restart') {
     if (!isLocal(req)) { res.statusCode = 403; return res.end('only from the REAPER computer'); }
     res.end('ok');
@@ -473,6 +486,15 @@ const yargDash = createYargDashLink({
   onMessage: (m) => broadcast(m.type === 'yarg' ? { ...m, yarg: { ...m.yarg, via: 'yargDash' } } : m),
 });
 startLocalYarg();
+// where tabs and settings are kept: yargDash's folders while it's running (same computer), else ours
+async function folders() {
+  if (yargDash.up()) {
+    const base = String(process.env.LIVE_CONSOLE_YARGDASH || config.yargDashUrl || 'http://127.0.0.1:8900').replace(/\/+$/, '');
+    const st = await fetch(`${base}/status`, { signal: AbortSignal.timeout(1500) }).then((r) => r.json()).catch(() => null);
+    if (st?.data) return { via: 'yargDash', tabsDir: st.tabsDir || path.join(st.data, 'tabs'), dataDir: st.data };
+  }
+  return { via: null, tabsDir: path.join(DATA_DIR, 'tabs'), dataDir: DATA_DIR };
+}
 const yargSnapshot = () => (yargDash.up() ? { ...yargDash.snapshot(), via: 'yargDash' } : { ...yarg.snapshot(), via: null });
 
 // "Once per play" claims (auto-loading the Live song): through yargDash, kept here against yargDash's play count
