@@ -21,6 +21,9 @@ const defaults = {
   tabScale: 1,                   // YARG tab: size on this device
   lanesSpeed: 1,                 // YARG lanes: note speed on this device (1 = 1.6 s from the far end to the strike line)
   lanesHidden: [],               // YARG lanes: parts not shown on this device (guitar | rhythm | bass | drums | keys)
+  keysTrack: '',                 // YARG keys: keyboard track id last picked on this device
+  keysSpeed: 1,                  // YARG keys: note speed on this device (1 = 2.4 s to fall)
+  keysNames: true,               // YARG keys: note names on the falling notes and keys
 };
 
 let saved = {};
